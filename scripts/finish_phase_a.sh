@@ -50,12 +50,12 @@ else
 fi
 
 echo "[4/5] loading synapse-wx LaunchAgent"
-"${REPO_ROOT}/scripts/install_launchd.sh"
+"${REPO_ROOT}/scripts/install.sh" wx
 
 echo "[5/5] bridge is live. Now open WeChat, send a message to your bot."
 echo
 echo "    Watch the live log:  tail -f ~/Library/Logs/synapse-wx.out.log"
-echo "    Stop the bridge:     ./scripts/uninstall_launchd.sh"
+echo "    Stop the bridge:     ./scripts/uninstall.sh wx"
 echo
 echo "Phase A exit-condition closure: send '/info' to the bot from WeChat;"
 echo "you should see one line back with model/sid/token. That confirms the"

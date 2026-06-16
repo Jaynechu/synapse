@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.synapse-tg.bridge</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BRIDGE_BIN__</string>
+        <string>-m</string>
+        <string>__BRIDGE_MODULE__</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__BRIDGE_HOME__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__USER_HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__USER_HOME__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>__USER_HOME__/Library/Logs/synapse-tg.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__USER_HOME__/Library/Logs/synapse-tg.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
