@@ -11,7 +11,7 @@ license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
-tg = ["python-telegram-bot>=22.0"]
+tg = ["python-telegram-bot[job-queue]>=22.0"]
 wx = [
     "httpx>=0.27",
     "qrcode>=7.4",
