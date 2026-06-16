@@ -79,6 +79,24 @@ def get_session_model(session_get_model_command: str, sid: str) -> str | None:
     return out or None
 
 
+def get_session_created_at(session_created_command: str, sid: str) -> str | None:
+    """Best-effort read of created_at ISO timestamp for sid. None on miss/error."""
+    if not sid:
+        return None
+    cmd = _format(session_created_command, sid=sid)
+    if cmd is None:
+        return None
+    try:
+        r = subprocess.run(cmd, check=False, capture_output=True, timeout=5.0, text=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("get_session_created_at subprocess failed: %s", e)
+        return None
+    if r.returncode != 0:
+        return None
+    out = (r.stdout or "").strip()
+    return out or None
+
+
 def list_recent_sessions(
     session_list_recent_command: str,
     cc_projects_dir: str | Path | None,

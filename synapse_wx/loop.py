@@ -7,11 +7,12 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from synapse_core import last_active
+from synapse_core.marrow_session import get_session_created_at
 from synapse_core.alerts import AlertSink
 from synapse_core.anchor import quote_prefix, time_anchor
 from synapse_core.commands import messages
@@ -153,7 +154,11 @@ class MainLoop:
         # /info reports cc-session age, not bridge age. Stamped fresh in
         # _drain_recv on every cc `system{init}` (new sid) and on boot_resume.
         # forget_session clears it so the next live sid restamps cleanly.
-        self._session_start_ts: float | None = None
+        self._session_created_at: str | None = None
+        if self.state.session_id:
+            self._session_created_at = get_session_created_at(
+                cfg.session_created_command, self.state.session_id
+            )
         self._last_poll_ok_ts: float = 0.0
         # Restart self-announce: fired once after the first successful poll
         # so the message is never dropped while iLink is still warming up.
@@ -206,7 +211,13 @@ class MainLoop:
         # current session without waiting for cc's `system{init}` echo.
         if boot_resume_sid and not self.state.session_id:
             self.state.session_id = boot_resume_sid
-            self._session_start_ts = self._clock()
+            cfg = self._cfg
+            sid = boot_resume_sid
+            self._session_created_at = (
+                get_session_created_at(cfg.session_created_command, sid)
+                if cfg is not None
+                else None
+            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._stop_evt.clear()
         self._poll_thread = threading.Thread(
             target=self._poll_run, name="synapse-wx-poll-loop", daemon=True
@@ -700,7 +711,12 @@ class MainLoop:
                     # Stamp session_start_ts on sid change so /info reports
                     # current cc-session age, not the bridge process age.
                     if sid != self.state.session_id:
-                        self._session_start_ts = self._clock()
+                        cfg = self._cfg
+                        self._session_created_at = (
+                            get_session_created_at(cfg.session_created_command, sid)
+                            if cfg is not None
+                            else None
+                        ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     self.state.session_id = sid
                     if self._last_from_wxid:
                         try:
@@ -889,11 +905,13 @@ class MainLoop:
             self._last_poll_ok_ts > 0
             and (now - self._last_poll_ok_ts) <= max(3.0, self._poll_interval_sec * 3)
         )
-        session_age = (
-            now - self._session_start_ts
-            if self._session_start_ts is not None
-            else None
-        )
+        session_age = None
+        if self._session_created_at:
+            try:
+                created = datetime.fromisoformat(self._session_created_at.replace("Z", "+00:00"))
+                session_age = (datetime.now(timezone.utc) - created).total_seconds()
+            except (ValueError, TypeError):
+                pass
         return {
             "cc_pid": pid,
             "cwd": cwd,
@@ -905,7 +923,7 @@ class MainLoop:
     def forget_session(self) -> None:
         """Drop the current user's sid from the SessionTracker."""
         # Clear so /info shows '?' until cc emits the next system{init}.
-        self._session_start_ts = None
+        self._session_created_at = None
         wxid = self._last_from_wxid
         if not wxid:
             return

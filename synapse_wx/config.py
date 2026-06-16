@@ -36,6 +36,8 @@ class Config:
     )
     # cwd resolver: prints the cwd for a sid, or empty line if unknown.
     session_cwd_command: str = "mw get-session-cwd --sid {sid}"
+    # created_at resolver: prints ISO timestamp for a sid, or empty on miss.
+    session_created_command: str = "mw get-session-created --sid {sid}"
     # B1: model /clear lands on (canonical id, "[1m]" suffix kept).
     clear_default_model: str = "claude-opus-4-6[1m]"
     # cc transcript dir for /resume jsonl fallback (and B7 history replay).
@@ -101,6 +103,7 @@ def load_config(path: Path | None = None) -> Config:
             "session_get_model_command",
             "session_list_recent_command",
             "session_cwd_command",
+            "session_created_command",
             "clear_default_model",
             "cc_projects_dir",
             "marrow_db_path",

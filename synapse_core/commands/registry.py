@@ -350,8 +350,8 @@ class Registry:
 
         - sid renders the first 8 chars only, or ``—`` when no session yet
           (no ``SID-`` prefix — the field position carries the meaning).
-        - session_age is the live cc-session lifespan (since the current sid's
-          first ``system{init}``), NOT the bridge process uptime. ``?`` until
+        - session_age is the real session lifespan from marrow created_at,
+          falling back to bridge-init time if marrow is unavailable. ``?`` until
           the first sid arrives.
         - 5h / 7d come from oauth ``/api/oauth/usage`` via UsageClient,
           cached, never raises. Per-window fallback to the legacy
@@ -434,10 +434,10 @@ class Registry:
                 pass
             if self._ctx.channel:
                 session_lock.release(old_sid, self._ctx.channel)
-        self._ctx.swap_provider(default_model, None)
         self._ctx.forget_session()
         state.session_id = None
         state.model = default_model
+        self._ctx.swap_provider(default_model, None)
         self._ctx.persist_state()
         return self._t("clear.ok", name=display_name(default_model))
 

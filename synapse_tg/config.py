@@ -32,6 +32,7 @@ class TgConfig:
     session_record_command: str = ""
     session_get_model_command: str = ""
     session_cwd_command: str = ""
+    session_created_command: str = ""
     session_list_recent_command: str = ""
 
     # CWD presets
@@ -95,6 +96,8 @@ def load_config(path: Path | None = None) -> TgConfig:
             cfg.session_get_model_command = marrow["session_get_model_command"]
         if isinstance(marrow.get("session_cwd_command"), str):
             cfg.session_cwd_command = marrow["session_cwd_command"]
+        if isinstance(marrow.get("session_created_command"), str):
+            cfg.session_created_command = marrow["session_created_command"]
         if isinstance(marrow.get("session_list_recent_command"), str):
             cfg.session_list_recent_command = marrow["session_list_recent_command"]
 

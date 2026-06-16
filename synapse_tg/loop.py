@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,7 @@ from telegram import Bot, Update
 from telegram.ext import ContextTypes
 
 from synapse_core import bridge_state_store
+from synapse_core.marrow_session import get_session_created_at
 from synapse_core.commands import messages
 from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.debounce import InboundBuffer
@@ -113,7 +115,11 @@ class TgLoop:
         self._state = self._load_state()
         self._registry = self._build_registry()
         self._queued_extra_bubbles: list[str] = []
-        self._session_start_ts: float = 0.0
+        self._session_created_at: str | None = None
+        if self._state.session_id:
+            self._session_created_at = get_session_created_at(
+                cfg.session_created_command, self._state.session_id
+            )
         self._user_initiated_close = False
 
     def _load_state(self) -> BridgeState:
@@ -256,10 +262,14 @@ class TgLoop:
                     if sid and isinstance(sid, str):
                         if self._state.session_id != sid:
                             self._state.session_id = sid
-                            self._session_start_ts = time.monotonic()
+                            self._session_created_at = get_session_created_at(
+                                self._cfg.session_created_command, sid
+                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                             self._persist_state()
-                        elif not self._session_start_ts:
-                            self._session_start_ts = time.monotonic()
+                        elif not self._session_created_at:
+                            self._session_created_at = get_session_created_at(
+                                self._cfg.session_created_command, sid
+                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         if self._sessions is not None and self._pending_chat_id is not None:
                             self._sessions.set(str(self._pending_chat_id), sid)
                         if self._record_session is not None:
@@ -346,10 +356,14 @@ class TgLoop:
                     if sid and isinstance(sid, str):
                         if self._state.session_id != sid:
                             self._state.session_id = sid
-                            self._session_start_ts = time.monotonic()
+                            self._session_created_at = get_session_created_at(
+                                self._cfg.session_created_command, sid
+                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                             self._persist_state()
-                        elif not self._session_start_ts:
-                            self._session_start_ts = time.monotonic()
+                        elif not self._session_created_at:
+                            self._session_created_at = get_session_created_at(
+                                self._cfg.session_created_command, sid
+                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                         if self._sessions is not None and self._pending_chat_id is not None:
                             self._sessions.set(str(self._pending_chat_id), sid)
                         if self._record_session is not None:
@@ -440,8 +454,12 @@ class TgLoop:
         """Return current bridge status for /info display."""
         alive = self._provider is not None and self._provider.alive
         age = None
-        if self._session_start_ts:
-            age = time.monotonic() - self._session_start_ts
+        if self._session_created_at:
+            try:
+                created = datetime.fromisoformat(self._session_created_at.replace("Z", "+00:00"))
+                age = (datetime.now(timezone.utc) - created).total_seconds()
+            except (ValueError, TypeError):
+                pass
         return {
             "model": self._state.model,
             "session_id": self._state.session_id,
