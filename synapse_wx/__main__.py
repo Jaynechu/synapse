@@ -226,20 +226,15 @@ def main() -> int:
             marrow_audit.write_block(marrow_db_expanded, sid, status)
 
     def _compact_handler() -> str:
-        """E-polish /compact: pipe `/compact` to cc's stdin so cc compacts in-place.
-
-        cc parses leading `/` server-side. If the provider is alive, we send
-        the slash as a normal user frame — cc detects it and triggers its
-        native compaction routine.
-        """
+        vs = main_loop.state.voice_style if main_loop else None
         prov = main_loop._provider
         if prov is None or not getattr(prov, "alive", False):
-            return "[compact] cc not running"
+            return cmd_messages.t("compact.no_cc", vs)
         send_raw = getattr(prov, "send_raw_user_text", None)
         if send_raw is None:
-            return "[compact] provider does not support pipe"
+            return cmd_messages.t("compact.no_pipe", vs)
         send_raw("/compact")
-        return "[compact] /compact piped to cc"
+        return cmd_messages.t("compact.piped", vs)
 
     def _send_extra_bubbles(bubbles: list[str]) -> None:
         """B6: push replay `[回放]` bubbles to the most-recent wx user.

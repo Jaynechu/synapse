@@ -13,7 +13,7 @@ from telegram.ext import Application, MessageHandler, filters
 
 from synapse_core import marrow_session
 from synapse_core.alerts import AlertSink
-from synapse_core.commands import marrow_audit
+from synapse_core.commands import marrow_audit, messages
 from synapse_core.commands.handlers import replay_for_channel
 from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.health import HealthGate
@@ -135,6 +135,17 @@ def main() -> int:
     def _send_extra_bubbles(bubbles: list[str]) -> None:
         loop._queued_extra_bubbles.extend(bubbles)
 
+    def _compact_handler() -> str:
+        lp = loop_box["loop"]
+        vs = lp._state.voice_style if lp else None
+        if lp is None or lp._provider is None or not lp._provider.alive:
+            return messages.t("compact.no_cc", vs)
+        send_raw = getattr(lp._provider, "send_raw_user_text", None)
+        if send_raw is None:
+            return messages.t("compact.no_pipe", vs)
+        send_raw("/compact")
+        return messages.t("compact.piped", vs)
+
     # --- cwd presets (inject from config into registry module) ---
     if cfg.cwd_presets:
         import synapse_core.commands.registry as _reg
@@ -178,6 +189,7 @@ def main() -> int:
             sid=sid,
         ),
         fetch_diary=loop._make_fetch_diary(),
+        compact_handler=_compact_handler,
     )
     loop._registry = Registry(ctx)
 

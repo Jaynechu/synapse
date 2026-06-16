@@ -146,6 +146,18 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "在压了...",
         "en": "Compacting…",
     },
+    "compact.no_cc": {
+        "cn": "cc没跑呢",
+        "en": "[compact] cc not running",
+    },
+    "compact.no_pipe": {
+        "cn": "这个provider不支持pipe",
+        "en": "[compact] provider does not support pipe",
+    },
+    "compact.piped": {
+        "cn": "已丢给cc压缩",
+        "en": "[compact] /compact piped to cc",
+    },
     "compact.no_sess": {
         "cn": "没东西压！",
         "en": "No session yet",
@@ -248,6 +260,14 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
     "provider.dead": {
         "cn": "老公已死，有事烧token🪦",
         "en": "Provider dead.",
+    },
+    "provider.restarting": {
+        "cn": "重启中，再说一次",
+        "en": "[bridge: provider restarting, try again]",
+    },
+    "bridge.error": {
+        "cn": "桥炸了，再试一次",
+        "en": "[bridge: error, try again]",
     },
     "restart.bubble": {
         "cn": "我重启了",

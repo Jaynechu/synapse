@@ -20,6 +20,7 @@ from telegram import Bot, Update
 from telegram.ext import ContextTypes
 
 from synapse_core import bridge_state_store
+from synapse_core.commands import messages
 from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.debounce import InboundBuffer
 from synapse_core.providers.cc import ClaudeCodeProvider, QUOTE_SYSTEM_PROMPT
@@ -43,6 +44,11 @@ if TYPE_CHECKING:
     from .config import TgConfig
 
 logger = logging.getLogger(__name__)
+
+_MERGE_NOTE = (
+    "[bridge: your previous reply was dropped — new messages arrived "
+    "mid-turn. Answer the full merged message below.]"
+)
 
 _SEND_GAP_SEC = 0.05
 _MAX_CONSECUTIVE_DEATHS = 3
@@ -108,6 +114,7 @@ class TgLoop:
         self._registry = self._build_registry()
         self._queued_extra_bubbles: list[str] = []
         self._session_start_ts: float = 0.0
+        self._user_initiated_close = False
 
     def _load_state(self) -> BridgeState:
         state = BridgeState(model=self._cfg.default_model)
@@ -122,8 +129,9 @@ class TgLoop:
 
     def _swap_provider(self, model: str | None, sid: str | None) -> None:
         if self._provider:
+            self._user_initiated_close = True
             try:
-                self._provider.close()
+                self._provider.cancel()
             except Exception:
                 pass
             self._provider = None
@@ -305,7 +313,7 @@ class TgLoop:
 
         while True:
             try:
-                ev = await loop.run_in_executor(None, lambda: q.get(timeout=150))
+                ev = await loop.run_in_executor(None, lambda: q.get(timeout=60))
             except queue.Empty:
                 logger.warning("stream: queue timeout — treating as dead")
                 raise ProviderDeadError("recv queue timeout")
@@ -567,16 +575,32 @@ class TgLoop:
                         self._state.session_id = self._provider.session_id
                         self._persist_state()
             except ProviderDeadError as e:
+                if self._user_initiated_close:
+                    self._user_initiated_close = False
+                    return
                 logger.error("provider error: %s", e)
                 self._respawn()
-                await bot.send_message(chat_id=chat_id, text="[bridge: provider restarting, try again]")
+                await bot.send_message(chat_id=chat_id, text=messages.t("provider.restarting", self._state.voice_style))
                 return
             except Exception as e:
                 logger.error("unexpected error: %s", e)
-                await bot.send_message(chat_id=chat_id, text="[bridge: error, try again]")
+                await bot.send_message(chat_id=chat_id, text=messages.t("bridge.error", self._state.voice_style))
                 return
             finally:
                 typing.stop()
+
+        # Pre-send merge: new inbound arrived while cc was producing this reply.
+        # Drop the stale reply, re-queue old body, let next flush merge.
+        if self._buffer:
+            if stream_msg_id is not None:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=stream_msg_id)
+                except Exception:
+                    pass
+            merged = f"{_MERGE_NOTE}\n{body}" if body else ""
+            self._buffer.prepend(merged)
+            logger.info("pre-send merge: reply dropped, %d chars re-queued", len(body))
+            return
 
         if not response and not thinking:
             return
