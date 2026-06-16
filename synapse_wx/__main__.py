@@ -344,6 +344,7 @@ def main() -> int:
         respawn_with_resume=main_loop.respawn_with_resume,
         replay_user_text=main_loop.replay_user_text,
         cc_cwd=state.cc_cwd,
+        channel="wx",
         compact_handler=_compact_handler,
         persist_state=_save_state,
         usage_client=usage_client.fetch,

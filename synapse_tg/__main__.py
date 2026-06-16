@@ -183,6 +183,7 @@ def main() -> int:
         respawn_with_resume=loop.respawn_with_resume,
         replay_user_text=loop.replay_user_text,
         cc_cwd=state.cc_cwd,
+        channel="tg",
         cc_projects_root=Path(cc_projects_dir),
         usage_client=usage_client.fetch,
         resolve_session_cwd=lambda sid: marrow_session.session_cwd(

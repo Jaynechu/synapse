@@ -48,6 +48,9 @@ class BridgeState:
     # prose. NOT persisted — a bridge crash drops the menu, user can /resume
     # again. Any inbound message clears it, the picker handler may re-arm.
     pending_picker: str | None = None
+    # Snapshot of rows from the last /resume picker so a delayed digit reply
+    # resolves against the SAME list the user saw, not a re-queried one.
+    picker_rows: list[dict] = field(default_factory=list)
     # /cwd — current cwd cc subprocess spawns in. None = use DEFAULT_CC_CWD.
     # Persisted; survives bridge restart so the active project sticks.
     cc_cwd: str | None = None

@@ -18,6 +18,8 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+
+from synapse_core import session_lock
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -198,6 +200,8 @@ class CommandContext:
     # (`~/.claude/projects/<slug>/<sid>.jsonl`). Default None → jsonl_edit
     # falls back to `os.getcwd()` then walks `~/.claude/projects/`.
     cc_cwd: str | None = None
+    # Channel identity for session lock (e.g. "tg", "wx").
+    channel: str = ""
     # B9: override the projects root (`~/.claude/projects/`). Used by tests to
     # point jsonl_edit at a sandbox tmp dir. None → real default.
     cc_projects_root: Path | None = None
@@ -262,15 +266,19 @@ class Registry:
             state.pending_picker = None
 
         if text.startswith("/"):
+            state.picker_rows = []
             return ("handled", self._dispatch_slash(text[1:]))
 
-        # Bare digit right after a /resume picker → route to picker handler
-        # instead of forwarding "5" to cc as the prose "5".
+        # Bare digit right after a /resume picker → route to picker handler.
+        # picker_rows is consumed inside _handle_resume, not cleared here.
         if pending == "resume" and text.isdigit():
             return ("handled", self._handle_resume(text))
         # Same for /cwd picker: bare digit picks a preset.
         if pending == "cwd" and text.isdigit():
+            state.picker_rows = []
             return ("handled", self._handle_cwd(text))
+
+        state.picker_rows = []
 
         # B8: bare-message literals. Exact match only — payload after the
         # literal forwards as prose so users can still write "mm- this" freely.
@@ -282,6 +290,14 @@ class Registry:
         # Natural alias path: bare alias matches a key in MODEL_ALIASES.
         if text.lower() in MODEL_ALIASES:
             return ("handled", self._handle_model(text))
+
+        # Cross-channel session lock: block if another channel claimed this sid.
+        ch = self._ctx.channel
+        sid = state.session_id
+        if ch and sid:
+            owner = session_lock.holder(sid)
+            if owner and owner != ch:
+                return ("handled", self._t("session.locked", channel=owner))
 
         return ("forward", None)
 
@@ -415,6 +431,8 @@ class Registry:
                 self._ctx.fire_sessionend(old_sid)
             except Exception:  # noqa: BLE001 — never block /clear
                 pass
+            if self._ctx.channel:
+                session_lock.release(old_sid, self._ctx.channel)
         self._ctx.swap_provider(default_model, None)
         self._ctx.forget_session()
         state.session_id = None
@@ -431,17 +449,20 @@ class Registry:
             rows = self._ctx.list_recent_sessions() or []
             if not rows:
                 return self._t("resume.empty")
-            # Arm the picker so the next bare digit reply lands here.
+            # Arm the picker and snapshot rows so a delayed digit reply
+            # resolves against the same list the user saw.
             self._ctx.state.pending_picker = "resume"
+            self._ctx.state.picker_rows = rows
             return _format_resume_picker(rows)
         if token.isdigit():
-            rows = self._ctx.list_recent_sessions() or []
+            rows = self._ctx.state.picker_rows or self._ctx.list_recent_sessions() or []
             idx = int(token) - 1
             if idx < 0 or idx >= len(rows):
                 return self._t("resume.no_n", n=token)
             sid = rows[idx].get("sid") or ""
             if not sid:
                 return self._t("resume.no_n", n=token)
+            self._ctx.state.picker_rows = []
             return self._resume_sid(sid)
         return self._resume_sid(token)
 
@@ -484,6 +505,8 @@ class Registry:
         self._ctx.swap_provider(model, sid)
         state.model = model
         state.session_id = sid
+        if self._ctx.channel:
+            session_lock.claim(sid, self._ctx.channel)
         self._ctx.persist_state()
         ack = self._t("resume.ok", sid=sid[:8], name=display_name(model))
         if cwd_ack:

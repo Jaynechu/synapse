@@ -82,6 +82,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "🙂‍↔️你要的太多了",
         "en": "No session {n}",
     },
+    "session.locked": {
+        "cn": "🙂‍↔️老公已转移到{channel}，/clear或/resume",
+        "en": "Session claimed by {channel} — /clear or /resume",
+    },
 
     # ── /rewind ─────────────────────────────────────────────────
     "rewind.ok": {
