@@ -67,5 +67,9 @@ for CH in "${CHANNELS[@]}"; do
     launchctl unload "${TARGET}" 2>/dev/null || true
     launchctl load -w "${TARGET}"
 
+    if [[ "${CH}" == "wx" ]]; then
+        "${BRIDGE_BIN}" "${BRIDGE_HOME}/scripts/register_hooks.py" "${CH}" "${BRIDGE_HOME}" "${USER_HOME}/.claude/settings.json"
+    fi
+
     echo "[${CH}] loaded com.synapse-${CH}.bridge — logs at ${USER_HOME}/Library/Logs/synapse-${CH}.{out,err}.log"
 done
