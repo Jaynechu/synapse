@@ -445,7 +445,17 @@ def test_cwd_no_arg_lists_presets() -> None:
     assert "3 → marrow" in reply
 
 
-def test_cwd_preset_digit_switches_and_clears(tmp_path) -> None:
+def test_cwd_preset_digit_switches_and_clears(tmp_path, monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+    monkeypatch.setattr(
+        _reg_mod,
+        "_CWD_PRESETS",
+        (
+            "/Users/Gabrielle/Desktop/NY",
+            "/Users/Gabrielle/Library/Mobile Documents/com~apple~CloudDocs/Study",
+            "/Users/Gabrielle/CC-Lab/marrow",
+        ),
+    )
     s = BridgeState(
         cc_cwd="/Users/Gabrielle/Desktop/NY",
         session_id="old-sid",
@@ -516,7 +526,17 @@ def test_cwd_path_is_file_rejected(tmp_path) -> None:
     assert hooks.swap_calls == []
 
 
-def test_cwd_picker_bare_digit_switches() -> None:
+def test_cwd_picker_bare_digit_switches(monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+    monkeypatch.setattr(
+        _reg_mod,
+        "_CWD_PRESETS",
+        (
+            "/Users/Gabrielle/Desktop/NY",
+            "/Users/Gabrielle/Library/Mobile Documents/com~apple~CloudDocs/Study",
+            "/Users/Gabrielle/CC-Lab/marrow",
+        ),
+    )
     s = BridgeState(cc_cwd="/Users/Gabrielle/Desktop/NY")
     reg, _, _ = _make(s)
     # /cwd alone arms the picker.

@@ -155,7 +155,7 @@ class MainLoop:
         # _drain_recv on every cc `system{init}` (new sid) and on boot_resume.
         # forget_session clears it so the next live sid restamps cleanly.
         self._session_created_at: str | None = None
-        if self.state.session_id:
+        if self.state.session_id and cfg is not None:
             self._session_created_at = get_session_created_at(
                 cfg.session_created_command, self.state.session_id
             )
