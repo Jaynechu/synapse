@@ -49,8 +49,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
 
     # ── /clear ──────────────────────────────────────────────────
     "clear.ok": {
-        "cn": "新鸭上桌🦆 ·{name}[{effort}]·",
-        "en": "New session ·{name}[{effort}]·",
+        "cn": "新鸭上桌🦆 {name}[{effort}]",
+        "en": "New session {name}[{effort}]",
     },
 
     # ── /stop ───────────────────────────────────────────────────
@@ -67,8 +67,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
 
     # ── /resume ─────────────────────────────────────────────────
     "resume.ok": {
-        "cn": "🧚‍♀️本机已复活: {sid} | {name}",
-        "en": "Resumed: {sid} | {name}",
+        "cn": "🧚‍♀️本机已复活: {sid} | {name}[{effort}]",
+        "en": "Resumed: {sid} | {name}[{effort}]",
     },
     "resume.cwd_switched": {
         "cn": "(搬好家啦，这次在 {dir} 聊🏠)",
@@ -87,8 +87,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "en": "Session claimed by {channel} — /clear or /resume",
     },
     "session.claimed_away": {
-        "cn": "🦆旧鸭已飞往{channel}，新鸭即将上桌 ·{name}[{effort}]·",
-        "en": "Session moved to {channel}, new session incoming ·{name}[{effort}]·",
+        "cn": "🦆旧鸭已飞往{channel}，新鸭即将上桌 {name}[{effort}]",
+        "en": "Session moved to {channel}, new session incoming {name}[{effort}]",
     },
 
     # ── /rewind ─────────────────────────────────────────────────

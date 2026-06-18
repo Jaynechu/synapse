@@ -564,7 +564,8 @@ class Registry:
         if self._ctx.channel:
             session_lock.claim(sid, self._ctx.channel)
         self._ctx.persist_state()
-        ack = self._t("resume.ok", sid=sid[:8], name=display_name(model))
+        effort = (state.effort_level or "high").capitalize()
+        ack = self._t("resume.ok", sid=sid[:8], name=display_name(model), effort=effort)
         if cwd_ack:
             ack = f"{ack}\n{cwd_ack}"
         return ack
