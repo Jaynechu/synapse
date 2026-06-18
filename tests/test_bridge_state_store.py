@@ -27,7 +27,6 @@ def test_bridge_state_persist_roundtrip(tmp_path: Path) -> None:
             "quote_on": True,
             # model is intentionally session-scoped — should be dropped.
             "model": "claude-opus-4-6[1m]",
-            # extra junk should also be stripped
             "session_id": "ignored",
         },
     )
@@ -36,6 +35,7 @@ def test_bridge_state_persist_roundtrip(tmp_path: Path) -> None:
         "effort_level": "high",
         "thinking_on": True,
         "quote_on": True,
+        "session_id": "ignored",
     }
 
 
