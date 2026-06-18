@@ -31,9 +31,7 @@ class Config:
     )
     session_get_model_command: str = "mw get-session-model --sid {sid}"
     # B6 recent-session picker for /resume (empty arg).
-    session_list_recent_command: str = (
-        "mw list-recent-sessions --limit 10 --require-user-events"
-    )
+    session_list_recent_command: str = "mw list-recent-sessions --limit 10"
     # cwd resolver: prints the cwd for a sid, or empty line if unknown.
     session_cwd_command: str = "mw get-session-cwd --sid {sid}"
     # created_at resolver: prints ISO timestamp for a sid, or empty on miss.
