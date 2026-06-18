@@ -203,20 +203,25 @@ def main() -> int:
     loop._registry = Registry(ctx)
 
     # --- boot resume ---
-    snap = sessions.snapshot()
-    if snap:
-        candidate = next(iter(snap.values()), None)
-        if candidate:
-            p_root = Path(cc_projects_dir)
-            if p_root.exists():
-                has_jsonl = any(
-                    (p_root / d / f"{candidate}.jsonl").is_file()
-                    for d in os.listdir(str(p_root))
-                    if (p_root / d).is_dir()
-                )
-                if has_jsonl:
-                    state.session_id = candidate
-                    logger.info("boot resume: sid=%s", candidate)
+    # bridge_state.json (PERSISTED_KEYS) is authoritative; sessions.json
+    # is fallback only when state has no session_id (e.g. first boot).
+    if not state.session_id:
+        snap = sessions.snapshot()
+        if snap:
+            candidate = next(iter(snap.values()), None)
+            if candidate:
+                p_root = Path(cc_projects_dir)
+                if p_root.exists():
+                    has_jsonl = any(
+                        (p_root / d / f"{candidate}.jsonl").is_file()
+                        for d in os.listdir(str(p_root))
+                        if (p_root / d).is_dir()
+                    )
+                    if has_jsonl:
+                        state.session_id = candidate
+                        logger.info("boot resume (sessions.json fallback): sid=%s", candidate)
+    else:
+        logger.info("boot resume (persisted): sid=%s", state.session_id)
 
     # --- start ---
     idle_loop.start()
