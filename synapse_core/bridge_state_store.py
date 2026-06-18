@@ -27,7 +27,6 @@ PERSISTED_KEYS: tuple[str, ...] = (
     "quote_on",
     "voice_style",
     "cc_cwd",
-    "session_id",
 )
 
 

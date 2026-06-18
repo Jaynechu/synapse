@@ -162,6 +162,10 @@ class TgLoop:
         self._provider = self._make_provider()
         self._provider.spawn()
         logger.info("swap_provider: respawned (model=%s, sid=%s)", self._state.model, sid)
+        if sid:
+            created = get_session_created_at(self._cfg.session_created_command, sid)
+            if created:
+                self._session_created_at = created
         self._state.usage_total = {}
         self._state.last_assistant_usage = {}
 
