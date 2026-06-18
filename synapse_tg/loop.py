@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -134,6 +135,7 @@ class TgLoop:
                 cfg.session_created_command, self._state.session_id
             )
         self._user_initiated_close = False
+        self._msg_id_cache: collections.OrderedDict[int, str] = collections.OrderedDict()
 
     def _load_state(self) -> BridgeState:
         state = BridgeState(model=self._cfg.default_model)
@@ -256,7 +258,7 @@ class TgLoop:
         )
 
     def ensure_provider(self) -> None:
-        if self._provider is None or not self._provider.alive:
+        if self._provider is None or not self._provider.is_alive():
             self._provider = self._make_provider()
             self._provider.spawn()
             logger.info("provider spawned (sid=%s)", self._provider.session_id)
@@ -574,6 +576,10 @@ class TgLoop:
             quote_prefix = f'[quoting: "{quoted}"]\n'
         self._buffer.add(f"{quote_prefix}{text}" if quote_prefix else text)
         logger.debug("buffered text: %r (len=%d)", text[:80], len(self._buffer))
+        if update.message:
+            self._msg_id_cache[update.message.message_id] = text
+            if len(self._msg_id_cache) > 50:
+                self._msg_id_cache.popitem(last=False)
 
     async def on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.photo:
@@ -672,6 +678,7 @@ class TgLoop:
                     return
                 logger.error("provider error: %s", e)
                 self._respawn()
+                self._buffer.prepend(body)
                 await bot.send_message(chat_id=chat_id, text=messages.t("provider.restarting", self._state.voice_style))
                 return
             except Exception as e:
@@ -712,6 +719,22 @@ class TgLoop:
         if not response:
             return
 
+        reply_to_id = None
+        quote_match = re.search(r"<quote>(.*?)</quote>", response, re.DOTALL)
+        if quote_match:
+            fragment = quote_match.group(1).strip()
+            response = (response[: quote_match.start()] + response[quote_match.end() :]).strip()
+            for msg_id, msg_text in reversed(self._msg_id_cache.items()):
+                if fragment.lower() in msg_text.lower():
+                    reply_to_id = msg_id
+                    break
+            if stream_msg_id is not None and reply_to_id is not None:
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=stream_msg_id)
+                except Exception:
+                    pass
+                stream_msg_id = None
+
         bubbles = split_for_tg_typed(response)
         text_bubbles = [b for b in bubbles if b["kind"] == "text"]
 
@@ -738,14 +761,21 @@ class TgLoop:
                 if skip_first_text:
                     skip_first_text = False
                     continue
+                send_kwargs = dict(
+                    chat_id=chat_id,
+                    text=gfm_to_tg_html(bubble["text"]),
+                    parse_mode="HTML",
+                )
+                if reply_to_id is not None:
+                    send_kwargs["reply_to_message_id"] = reply_to_id
+                    reply_to_id = None
                 try:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=gfm_to_tg_html(bubble["text"]),
-                        parse_mode="HTML",
-                    )
+                    await bot.send_message(**send_kwargs)
                 except Exception:
-                    await bot.send_message(chat_id=chat_id, text=bubble["text"])
+                    fallback_kwargs = dict(chat_id=chat_id, text=bubble["text"])
+                    await bot.send_message(**fallback_kwargs)
             else:
-                await send_media(bot, chat_id, bubble["kind"], bubble["path"])
+                await send_media(bot, chat_id, bubble["kind"], bubble["path"], reply_to=reply_to_id)
+                if reply_to_id is not None:
+                    reply_to_id = None
             await asyncio.sleep(_SEND_GAP_SEC)
