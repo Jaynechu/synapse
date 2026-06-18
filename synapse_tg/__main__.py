@@ -161,6 +161,15 @@ def main() -> int:
             v for _, v in sorted(cfg.cwd_presets.items()) if v
         )
 
+    def _record_effort(sid: str, effort: str) -> None:
+        try:
+            subprocess.run(
+                ["mw", "add-session", "--sid", sid, "--effort", effort],
+                capture_output=True, timeout=5.0,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            logger.warning("record_effort failed: %s", e)
+
     # --- full command context ---
     ctx = CommandContext(
         state=state,
@@ -199,6 +208,10 @@ def main() -> int:
         ),
         fetch_diary=loop._make_fetch_diary(),
         compact_handler=_compact_handler,
+        record_effort=_record_effort,
+        resolve_session_effort=lambda sid: marrow_session.get_session_effort(
+            cfg.session_get_effort_command, sid,
+        ),
     )
     loop._registry = Registry(ctx)
 

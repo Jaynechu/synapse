@@ -312,9 +312,11 @@ class Registry:
                 state.model = default_model
                 self._ctx.swap_provider(default_model, None)
                 self._ctx.persist_state()
+                effort = (state.effort_level or "high").capitalize()
                 try:
                     self._ctx.send_extra_bubbles(
-                        [self._t("session.claimed_away", channel=owner)]
+                        [self._t("session.claimed_away", channel=owner,
+                                 name=display_name(default_model), effort=effort)]
                     )
                 except Exception:
                     pass
@@ -463,7 +465,8 @@ class Registry:
         state.model = default_model
         self._ctx.swap_provider(default_model, None)
         self._ctx.persist_state()
-        return self._t("clear.ok", name=display_name(default_model))
+        effort = (state.effort_level or "high").capitalize()
+        return self._t("clear.ok", name=display_name(default_model), effort=effort)
 
     def _handle_resume(self, rest: str) -> str:
         """B1: /resume <sid> reads model from marrow.sessions (fallback jsonl

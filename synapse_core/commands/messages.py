@@ -49,8 +49,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
 
     # ── /clear ──────────────────────────────────────────────────
     "clear.ok": {
-        "cn": "新鸭上桌🦆 ({name})",
-        "en": "New session ({name})",
+        "cn": "新鸭上桌🦆 ·{name}[{effort}]·",
+        "en": "New session ·{name}[{effort}]·",
     },
 
     # ── /stop ───────────────────────────────────────────────────
@@ -87,8 +87,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "en": "Session claimed by {channel} — /clear or /resume",
     },
     "session.claimed_away": {
-        "cn": "🔄老公已搬去{channel}，这边自动收工了",
-        "en": "Session moved to {channel}, auto-cleared",
+        "cn": "🦆旧鸭已飞往{channel}，新鸭即将上桌 ·{name}[{effort}]·",
+        "en": "Session moved to {channel}, new session incoming ·{name}[{effort}]·",
     },
 
     # ── /rewind ─────────────────────────────────────────────────
