@@ -421,6 +421,9 @@ class TgLoop:
                                         ):
                                             await _do_edit(accumulated)
 
+                    elif bt == "tool_use":
+                        if not typing.running:
+                            typing.start()
                     elif bt == "thinking":
                         if block.get("thinking"):
                             thinking_chunks.append(block["thinking"])

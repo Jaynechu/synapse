@@ -23,6 +23,10 @@ class TypingAction:
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())
 
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
     def stop(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
