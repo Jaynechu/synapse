@@ -89,6 +89,11 @@ def main() -> int:
             lp.idle_close_provider(sid)
 
     # --- idle fire loop ---
+    def _claimed_away(sid: str) -> None:
+        lp = loop_box["loop"]
+        if lp is not None:
+            lp._close_provider()
+
     idle_loop = IdleFireLoop(
         sessions=sessions,
         command_template=cfg.sessionend_command,
@@ -99,6 +104,7 @@ def main() -> int:
         cc_projects_dir=Path(cc_projects_dir),
         alerts=alerts,
         pre_spawn_hook=_idle_close,
+        claimed_away_hook=_claimed_away,
     )
 
     # --- tg loop ---
@@ -228,6 +234,7 @@ def main() -> int:
     try:
         app.run_polling()
     finally:
+        loop._close_provider()
         health.stamp_clean_shutdown()
         idle_loop.stop()
         logger.info("synapse-tg shutdown complete")

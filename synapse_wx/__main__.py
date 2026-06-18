@@ -172,6 +172,11 @@ def main() -> int:
             return
         ml.idle_close_provider(sid)
 
+    def _claimed_away(sid: str) -> None:
+        ml = main_loop_box["loop"]
+        if ml is not None:
+            ml.close_provider()
+
     idle_loop = IdleFireLoop(
         sessions=sessions,
         command_template=cfg.sessionend_command,
@@ -181,6 +186,7 @@ def main() -> int:
         channel=CHANNEL,
         alerts=alerts,
         pre_spawn_hook=_idle_close,
+        claimed_away_hook=_claimed_away,
     )
     buffer = InboundBuffer()
 

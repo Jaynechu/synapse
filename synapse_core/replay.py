@@ -194,3 +194,62 @@ def format_for_channel(turns: list[dict]) -> list[str]:
         out.append(f"{_REPLAY_PREFIX} {role}: {content}")
     return out
 
+
+
+def read_turns_since(
+    sid: str,
+    since_line: int,
+    cwd: str | None = None,
+    projects_root: Path | None = None,
+) -> list[dict]:
+    """Return all user/assistant turns after line `since_line` in sid's jsonl.
+
+    Used for incremental replay after cross-channel resume. Falls back to
+    read_last_n_turns(n=2) if since_line is beyond current file length.
+    """
+    if not sid or since_line < 0:
+        return []
+    cwd = cwd if cwd is not None else os.getcwd()
+    path = _jsonl_path(sid, cwd, projects_root)
+    if path is None:
+        return []
+
+    turns: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for line_num, raw in enumerate(f):
+                if line_num < since_line:
+                    continue
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    ev = json.loads(raw)
+                except (ValueError, UnicodeDecodeError):
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                etype = ev.get("type")
+                if etype not in ("user", "assistant"):
+                    continue
+                msg = ev.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                if etype == "user":
+                    text = _extract_user_text(msg)
+                else:
+                    text = _extract_assistant_text(msg)
+                if not text:
+                    continue
+                turns.append({
+                    "role": etype,
+                    "content": text,
+                    "ts": _parse_ts(ev.get("timestamp")),
+                })
+    except OSError as e:
+        logger.warning("replay: jsonl read failed for %s: %s", sid, e)
+        return []
+
+    if not turns:
+        return read_last_n_turns(sid, n=2, cwd=cwd, projects_root=projects_root)
+    return turns

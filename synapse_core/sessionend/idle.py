@@ -53,6 +53,7 @@ class IdleFireLoop:
         alerts=None,
         spawn_probe_sec: float = 3.0,
         pre_spawn_hook: Callable[[str], None] | None = None,
+        claimed_away_hook: Callable[[str], None] | None = None,
     ) -> None:
         self._sessions = sessions
         self._command_template = command_template or ""
@@ -72,6 +73,7 @@ class IdleFireLoop:
         # SessionEnd hook archives events + writes bridge_owns marker. sid is
         # NOT cleared from SessionTracker (next inbound lazy-resumes).
         self._pre_spawn_hook = pre_spawn_hook
+        self._claimed_away_hook = claimed_away_hook
 
         self._stop_evt = threading.Event()
         self._thread: threading.Thread | None = None
@@ -124,7 +126,18 @@ class IdleFireLoop:
         # Skip if another channel holds this session (cross-channel resume).
         owner = session_lock.holder(sid)
         if owner and owner != self._channel:
-            logger.debug("idle skip sid=%s: held by %s", sid[:8], owner)
+            logger.info("idle: sid=%s claimed by %s, cleaning up", sid[:8], owner)
+            if self._claimed_away_hook:
+                try:
+                    self._claimed_away_hook(sid)
+                except Exception as e:
+                    logger.warning("claimed_away_hook failed: %s", e)
+            try:
+                from synapse_core import replay_bookmark
+                replay_bookmark.save(sid, self._channel)
+            except Exception:
+                pass
+            self._sessions.forget(user_id)
             return False
         jsonl = self._find_jsonl(sid)
         if jsonl is None:

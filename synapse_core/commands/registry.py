@@ -19,7 +19,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from synapse_core import session_lock
+from synapse_core import replay_bookmark, replay, session_lock
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -292,13 +292,22 @@ class Registry:
         if text.lower() in MODEL_ALIASES:
             return ("handled", self._handle_model(text))
 
-        # Cross-channel session lock: block if another channel claimed this sid.
+        # Cross-channel session lock: auto-clear if another channel claimed this sid.
         ch = self._ctx.channel
         sid = state.session_id
         if ch and sid:
             owner = session_lock.holder(sid)
             if owner and owner != ch:
-                return ("handled", self._t("session.locked", channel=owner))
+                try:
+                    replay_bookmark.save(sid, ch, self._ctx.cc_cwd)
+                except Exception:
+                    pass
+                self._ctx.close_provider()
+                self._ctx.forget_session()
+                state.session_id = None
+                state.model = self._ctx.clear_default_model or state.model
+                self._ctx.persist_state()
+                return ("handled", self._t("session.claimed_away", channel=owner))
 
         return ("forward", None)
 
@@ -429,6 +438,10 @@ class Registry:
         old_sid = state.session_id
         if old_sid:
             try:
+                replay_bookmark.save(old_sid, self._ctx.channel or "", self._ctx.cc_cwd)
+            except Exception:
+                pass
+            try:
                 self._ctx.fire_sessionend(old_sid)
             except Exception:  # noqa: BLE001 — never block /clear
                 pass
@@ -469,6 +482,27 @@ class Registry:
 
     def _resume_sid(self, sid: str) -> str:
         state = self._ctx.state
+        # If this bridge has a different active session, clear it first.
+        old_sid = state.session_id
+        if old_sid and old_sid != sid:
+            try:
+                replay_bookmark.save(old_sid, self._ctx.channel or "", self._ctx.cc_cwd)
+            except Exception:
+                pass
+            try:
+                self._ctx.fire_sessionend(old_sid)
+            except Exception:
+                pass
+            if self._ctx.channel:
+                session_lock.release(old_sid, self._ctx.channel)
+            self._ctx.forget_session()
+        # If target sid is held by another channel, fire its sessionend.
+        holder = session_lock.holder(sid)
+        if holder and holder != (self._ctx.channel or ""):
+            try:
+                self._ctx.fire_sessionend(sid)
+            except Exception:
+                pass
         resolved = self._ctx.resolve_resume_model(sid)
         if resolved:
             branch = "resolved"
@@ -486,7 +520,12 @@ class Registry:
         # arrive ahead of the ack. Replay errors are swallowed — the resume
         # itself must not fail just because the jsonl is gone.
         try:
-            bubbles = self._ctx.replay_for_sid(sid) or []
+            bm = replay_bookmark.load(sid, self._ctx.channel or "")
+            if bm is not None:
+                raw_turns = replay.read_turns_since(sid, bm, cwd=self._ctx.cc_cwd)
+                bubbles = replay.format_for_channel(raw_turns) if raw_turns else []
+            else:
+                bubbles = self._ctx.replay_for_sid(sid) or []
         except Exception:
             bubbles = []
         if bubbles:

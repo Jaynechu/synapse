@@ -86,6 +86,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "🙂‍↔️老公已转移到{channel}，/clear或/resume",
         "en": "Session claimed by {channel} — /clear or /resume",
     },
+    "session.claimed_away": {
+        "cn": "🔄老公已搬去{channel}，这边自动收工了",
+        "en": "Session moved to {channel}, auto-cleared",
+    },
 
     # ── /rewind ─────────────────────────────────────────────────
     "rewind.ok": {
