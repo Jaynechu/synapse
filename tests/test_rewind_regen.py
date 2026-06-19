@@ -3,12 +3,13 @@
 Both commands:
   1. Truncate the jsonl on disk via `jsonl_edit.drop_last_n_pairs`
      (/regen always drops exactly one user/assistant pair).
-  2. Flag the dropped turns in marrow `audit_log` (`session_block=archive`)
-     so the daemon's Event ingest skips them.
-  3. Trigger a respawn via `respawn_with_resume(sid, model)` so cc reloads
+  2. Trigger a respawn via `respawn_with_resume(sid, model)` so cc reloads
      the trimmed history.
-  4. (/regen only) Resend the dropped user prompt via `replay_user_text`
+  3. (/regen only) Resend the dropped user prompt via `replay_user_text`
      so cc actually regenerates — `--resume` does not auto-replay.
+
+Note: session_block audit writes were removed — they clobbered mm- (latest-wins)
+and served no purpose (dropped turns are already gone from jsonl).
 
 Error path:
   - `/rewind 0` / `/rewind -3` / `/rewind` (no N) → `[error] ...`, no I/O.
@@ -180,8 +181,9 @@ def test_rewind_n_truncates_jsonl_and_flags_dropped_turns(tmp_path: Path) -> Non
     remaining = _read_jsonl(jsonl)
     texts = [_event_text(ev) for ev in remaining]
     assert texts == ["u1", "a1"]
-    # audit_log: session_block=archive must be written for the dropped sid.
-    assert ("session_block", sid, "archive") in hooks.audit_calls
+    # session_block writes removed — they clobbered mm- (latest-wins).
+    # Dropped turns are already gone from jsonl, no need for audit block.
+    assert ("session_block", sid, "archive") not in hooks.audit_calls
     # respawn was triggered with the same sid + model.
     assert hooks.respawn_calls == [(sid, "claude-opus-4-7[1m]")]
     # Sanity: projects_root resolves the file.
@@ -374,9 +376,9 @@ def test_regen_drops_last_pair_respawns_and_replays_user(tmp_path: Path) -> None
     # The dropped user prompt is pushed back on stdin so cc actually
     # regenerates — cc's --resume does not auto-replay.
     assert hooks.replay_calls == ["u2"]
-    # Marrow audit flag written for the dropped pair.
+    # session_block writes removed — clobbered mm- via latest-wins.
     block_calls = [c for c in hooks.audit_calls if c[0] == "session_block"]
-    assert block_calls, "expected session_block audit row for dropped turn"
+    assert not block_calls, "session_block should not be written by regen/rewind"
     # On-disk: u2 + a2-stale both gone, u1/a1 kept.
     remaining = _read_jsonl(jsonl)
     assert [_event_text(ev) for ev in remaining] == ["u1", "a1"]

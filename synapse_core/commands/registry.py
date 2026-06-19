@@ -640,20 +640,10 @@ class Registry:
         dropped = jsonl_edit.drop_last_n_pairs(
             sid, n, cwd=self._ctx.cc_cwd, projects_root=self._ctx.cc_projects_root
         )
-        if dropped:
-            try:
-                self._ctx.audit_writer("session_block", sid, "archive")
-            except Exception:
-                pass
         try:
             self._ctx.respawn_with_resume(sid, state.model)
         except Exception:
             pass
-        if dropped:
-            try:
-                self._ctx.audit_writer("session_block", sid, "cleared")
-            except Exception:
-                pass
         real_n = sum(1 for d in dropped if jsonl_edit.is_real_user_prompt(d))
         return self._t("rewind.ok", n=real_n)
 
@@ -680,20 +670,10 @@ class Registry:
             if text:
                 replay_text = text
                 break
-        if dropped:
-            try:
-                self._ctx.audit_writer("session_block", sid, "archive")
-            except Exception:
-                pass
         try:
             self._ctx.respawn_with_resume(sid, state.model)
         except Exception:
             pass
-        if dropped:
-            try:
-                self._ctx.audit_writer("session_block", sid, "cleared")
-            except Exception:
-                pass
         if replay_text:
             try:
                 self._ctx.replay_user_text(replay_text)

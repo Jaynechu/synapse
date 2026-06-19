@@ -875,6 +875,7 @@ class MainLoop:
             except Exception as e:
                 logger.warning("respawn close failed: %s", e)
             self._provider = None
+        self._provider_death_count = 0
         try:
             new_provider = self._provider_factory(model=model, resume_sid=sid)
         except TypeError:

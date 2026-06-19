@@ -26,7 +26,7 @@ from synapse_core.marrow_session import get_session_created_at, get_session_effo
 from synapse_core.commands import messages
 from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.debounce import InboundBuffer
-from synapse_core.providers.cc import ClaudeCodeProvider, QUOTE_SYSTEM_PROMPT
+from synapse_core.providers.cc import ClaudeCodeProvider, MEDIA_SYSTEM_PROMPT, QUOTE_SYSTEM_PROMPT
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.state import BridgeState
 
@@ -64,28 +64,15 @@ _STREAM_EDIT_CHARS = 200      # or every N new chars, whichever comes first
 # Strip media tags from streaming preview — handled after completion
 _MEDIA_TAG_RE = re.compile(r'<(image|gif|video|file)\s+path="[^"]*"\s*/?>', re.IGNORECASE)
 
-TG_MEDIA_SYSTEM_PROMPT = (
-    "To send media (photo/gif/video/file), put a tag in your reply, one tag "
-    'per file: <image path="/abs/p.jpg"> <gif path="/abs/a.gif"> '
-    '<video path="/abs/v.mp4"> <file path="/abs/doc.pdf"> '
-    "(file = pdf/txt/any other type). Tag position is bubble order. "
-    "The bridge uploads it and delivers a real Telegram media message. "
-    "The path must be a real existing local file - never fabricate.\n\n"
-    "Stickers: pair messages with stickers naturally — "
-    "search sticker_search by vibe/emotion, call sticker_pick(id), "
-    "then send with the matching tag: "
-    '<image path="..."/> for .png/.jpg/.webp, <gif path="..."/> for .gif. '
-    "When user sends an image: caption '1' = save as sticker (code-routed), "
-    "'0' = skip; no digit = if it looks sticker-worthy, just call sticker_ingest "
-    "directly. Desc format: emotion/scene | image text | one-line visual (CN preferred)."
-)
 
 TG_BUBBLE_FORMAT_PROMPT = (
     "Reply format (IM bubbles):\n"
     "- \\n = line break within the same bubble. \\n\\n = new bubble.\n"
-    "- Casual chat: short bubbles, <=50 chars each.\n"
-    "- Q&A / coding / in-depth: longer OK, <=200 chars per bubble.\n"
-    "- Long bubbles use \\n for line breaks. Prioritize readability.\n"
+    "- Casual chat: prefer short bubbles, e.g. 宝宝回来啦！\\n\\n想死我了\n"
+    "- Q&A: length flex. Coding: concise & clear.\n"
+    "- Deep topics / study: prefer longer, solid paragraphs.\n"
+    "- Dot points: use \\n within one bubble, not \\n\\n.\n"
+    "- Prioritize readability. Match length to content — no filler.\n"
     "- Do not read or edit code unless explicitly asked.\n"
     "- Free to search docs and web."
 )
@@ -182,6 +169,7 @@ class TgLoop:
 
     def _forget_session(self) -> None:
         self._state.session_id = None
+        self._death_count = 0
         self._buffer = InboundBuffer()
         if self._sessions is not None:
             for cid in list(self._sessions.snapshot()):
@@ -263,10 +251,12 @@ class TgLoop:
             marrow_bridge=cfg.marrow_bridge,
             effort_level=state.effort_level,
             stderr_log=Path.home() / "Library/Logs/synapse-tg-cc-stderr.log",
-            system_prompts=[QUOTE_SYSTEM_PROMPT, TG_MEDIA_SYSTEM_PROMPT, TG_BUBBLE_FORMAT_PROMPT],
+            system_prompts=[QUOTE_SYSTEM_PROMPT, MEDIA_SYSTEM_PROMPT, TG_BUBBLE_FORMAT_PROMPT],
         )
 
     def ensure_provider(self) -> None:
+        if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+            return
         if self._provider is None or not self._provider.is_alive():
             self._provider = self._make_provider()
             self._provider.spawn()
@@ -490,11 +480,13 @@ class TgLoop:
     def respawn_with_resume(self, sid: str, model: str | None) -> None:
         """Close current provider and spawn fresh with --resume."""
         if self._provider is not None:
+            self._user_initiated_close = True
             try:
                 self._provider.close()
             except Exception:
                 pass
             self._provider = None
+        self._death_count = 0
         self._state.session_id = sid
         if model:
             self._state.model = model

@@ -340,14 +340,14 @@ def test_rewind_clears_session_block_after_respawn(monkeypatch) -> None:
     verdict, _ = reg.dispatch("/rewind 1")
 
     assert verdict == "handled"
+    # session_block writes removed — clobbered mm- via latest-wins.
     assert calls == [
-        ("audit", "session_block", sid, "archive"),
         ("respawn", sid, "claude-opus-4-7"),
-        ("audit", "session_block", sid, "cleared"),
     ]
 
 
-def test_regen_clears_session_block_after_respawn(monkeypatch) -> None:
+def test_regen_no_session_block_writes(monkeypatch) -> None:
+    """session_block writes removed from regen — they clobbered mm-."""
     import synapse_core.commands.registry as _reg_mod
 
     sid = "regen-sid"
@@ -375,9 +375,7 @@ def test_regen_clears_session_block_after_respawn(monkeypatch) -> None:
 
     assert verdict == "handled"
     assert calls == [
-        ("audit", "session_block", sid, "archive"),
         ("respawn", sid, "claude-opus-4-7"),
-        ("audit", "session_block", sid, "cleared"),
     ]
 
 

@@ -127,6 +127,7 @@ def test_mm_plus_clears_skip_and_block() -> None:
     assert verdict == "handled"
     assert reply == "本窗口加入DB"
     assert calls == [
+        ("sessionend_extract", "sid-current", "reset:mm_plus"),
         ("manual_skip", "sid-current", "skip_cleared"),
         ("session_block", "sid-current", "cleared"),
     ]
