@@ -41,6 +41,7 @@ _CTX_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_to
 # user prose like "MM-don't archive this".
 _MM_MINUS = "mm-"
 _MM_PLUS = "mm+"
+_MM_PLUS_FLAG = "mm_plus_flag"
 
 # /effort: official cc 2.1.159+ levels passed verbatim as `--effort <level>`.
 _EFFORT_LEVELS: frozenset[str] = frozenset(
@@ -163,11 +164,12 @@ class CommandContext:
     persist_state: Callable[[], None] = field(
         default_factory=lambda: lambda: None
     )
-    # B8: marrow audit_log writer for ``mm-`` / ``mm+``. Signature is
-    # ``(kind, sid, status)`` where ``kind`` is ``"manual_skip"`` or
-    # ``"session_block"`` and ``status`` is one of:
+    # B8: marrow audit_log writer for mm controls. Signature is
+    # ``(kind, sid, status)`` where ``kind`` is ``"manual_skip"``,
+    # ``"session_block"``, or ``"force_sessionend"`` and ``status`` is one of:
     #   manual_skip:    "skip" | "skip_cleared"
     #   session_block:  "archive" | "cleared"
+    #   force_sessionend: "mm_plus_flag" | "mm_immediate" | "mm_immediate_current"
     # Default is a no-op so the bridge runs even when marrow is offline.
     audit_writer: Callable[[str, str, str], None] = field(
         default_factory=lambda: lambda _kind, _sid, _status: None
@@ -189,11 +191,8 @@ class CommandContext:
     respawn_with_resume: Callable[[str, str | None], None] = field(
         default_factory=lambda: lambda _sid, _model: None
     )
-    # B9: replay hook for /regen. After truncating the last user/assistant pair
-    # and respawning cc, the bridge resends the dropped user prompt on stdin so
-    # cc actually regenerates — `--resume` alone does not auto-replay the
-    # trailing unanswered prompt. Default no-op for tests + bridges that lack
-    # a live provider.
+    # B9: legacy replay hook. /regen now keeps the user prompt in jsonl and
+    # respawns cc with --resume, so normal handlers should not call this.
     replay_user_text: Callable[[str], None] = field(
         default_factory=lambda: lambda _text: None
     )
@@ -592,18 +591,12 @@ class Registry:
         return self._t("mm.block")
 
     def _handle_mm_plus(self) -> str:
-        """Reverse a prior ``mm-`` for the current session.
-
-        Writes a new pair of rows; marrow's latest-wins reader picks them up.
-        Also writes reset:mm_plus so bridge_owns gate lets SessionEnd
-        spawn sessionend_async on /clear.
-        """
+        """Clear manual skip and flag the current session for sessionend."""
         sid = self._ctx.state.session_id
         if not sid:
             return self._t("mm.clear_no_sess")
-        self._ctx.audit_writer("sessionend_extract", sid, "reset:mm_plus")
         self._ctx.audit_writer("manual_skip", sid, "skip_cleared")
-        self._ctx.audit_writer("session_block", sid, "cleared")
+        self._ctx.audit_writer("force_sessionend", sid, _MM_PLUS_FLAG)
         return self._t("mm.clear")
 
     def _handle_help(self) -> str:
@@ -620,10 +613,7 @@ class Registry:
     # ── B9: /rewind + /regen ──────────────────────────────────────
 
     def _handle_rewind(self, rest: str) -> str:
-        """Drop the last N user/assistant pairs from sid's jsonl, then respawn
-        cc with ``--resume <sid>``. Dropped turns are flagged in marrow
-        ``audit_log`` (session_block=archive) so they never ingest as events.
-        """
+        """Drop the last N assistant replies from sid's jsonl, then respawn cc."""
         token = (rest or "").strip()
         if not token:
             return self._t("rewind.usage")
@@ -637,48 +627,32 @@ class Registry:
         sid = state.session_id
         if not sid:
             return self._t("rewind.no_sess")
-        dropped = jsonl_edit.drop_last_n_pairs(
+        dropped = jsonl_edit.drop_last_n_replies(
             sid, n, cwd=self._ctx.cc_cwd, projects_root=self._ctx.cc_projects_root
         )
+        if not dropped:
+            return self._t("rewind.nothing")
         try:
             self._ctx.respawn_with_resume(sid, state.model)
         except Exception:
             pass
-        real_n = sum(1 for d in dropped if jsonl_edit.is_real_user_prompt(d))
-        return self._t("rewind.ok", n=real_n)
+        return self._t("rewind.ok", n=n)
 
     def _handle_regen(self) -> str:
-        """Drop the last user/assistant pair, respawn cc, resend the dropped
-        user prompt so cc regenerates a fresh reply.
-
-        cc's `--resume <sid>` only reloads context; it does NOT auto-replay
-        the trailing unanswered prompt. So we truncate the pair off disk,
-        respawn (cc reads the trimmed jsonl), then push the user's text back
-        on stdin via ``replay_user_text`` — that's what actually triggers a
-        new generation.
-        """
+        """Drop the last assistant reply and respawn cc to regenerate it."""
         state = self._ctx.state
         sid = state.session_id
         if not sid:
             return self._t("regen.no_sess")
-        dropped = jsonl_edit.drop_last_n_pairs(
+        dropped = jsonl_edit.drop_last_n_replies(
             sid, 1, cwd=self._ctx.cc_cwd, projects_root=self._ctx.cc_projects_root
         )
-        replay_text: str | None = None
-        for ev in dropped:
-            text = jsonl_edit.extract_user_text(ev)
-            if text:
-                replay_text = text
-                break
+        if not dropped:
+            return self._t("regen.nothing")
         try:
             self._ctx.respawn_with_resume(sid, state.model)
         except Exception:
             pass
-        if replay_text:
-            try:
-                self._ctx.replay_user_text(replay_text)
-            except Exception:
-                pass
         return self._t("regen.ok")
 
     # ── E-polish: /thinking + /effort + /compact ─────────────────

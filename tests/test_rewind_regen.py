@@ -1,12 +1,10 @@
 """B9 — `/rewind N` and `/regen` registry dispatch + side effects.
 
 Both commands:
-  1. Truncate the jsonl on disk via `jsonl_edit.drop_last_n_pairs`
-     (/regen always drops exactly one user/assistant pair).
+  1. Remove assistant reply cycles from jsonl via `jsonl_edit.drop_last_n_replies`
+     while keeping real user prompts.
   2. Trigger a respawn via `respawn_with_resume(sid, model)` so cc reloads
      the trimmed history.
-  3. (/regen only) Resend the dropped user prompt via `replay_user_text`
-     so cc actually regenerates — `--resume` does not auto-replay.
 
 Note: session_block audit writes were removed — they clobbered mm- (latest-wins)
 and served no purpose (dropped turns are already gone from jsonl).
@@ -151,7 +149,7 @@ def _make_ctx(
 # ── /rewind ──────────────────────────────────────────────────────────────────
 
 
-def test_rewind_n_truncates_jsonl_and_flags_dropped_turns(tmp_path: Path) -> None:
+def test_rewind_n_drops_replies_keeps_user_prompts(tmp_path: Path) -> None:
     sid = "abc12345"
     state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -177,10 +175,10 @@ def test_rewind_n_truncates_jsonl_and_flags_dropped_turns(tmp_path: Path) -> Non
     assert verdict == "handled"
     assert reply is not None
     assert "失忆" in reply
-    # jsonl: last 2 pairs dropped
+    # jsonl: rewind 2 keeps anchor u2, drops a2+u3+a3
     remaining = _read_jsonl(jsonl)
     texts = [_event_text(ev) for ev in remaining]
-    assert texts == ["u1", "a1"]
+    assert texts == ["u1", "a1", "u2"]
     # session_block writes removed — they clobbered mm- (latest-wins).
     # Dropped turns are already gone from jsonl, no need for audit block.
     assert ("session_block", sid, "archive") not in hooks.audit_calls
@@ -191,9 +189,7 @@ def test_rewind_n_truncates_jsonl_and_flags_dropped_turns(tmp_path: Path) -> Non
 
 
 def test_rewind_counts_real_user_prompts_skipping_tool_loop(tmp_path: Path) -> None:
-    """`/rewind 2` drops the last 2 user prompts AND every assistant/tool_use/
-    tool_result entry that came after them — tool_result lines (also type:user)
-    do not count as separate turns. Reply shows N=real prompts rewound.
+    """`/rewind 2` keeps prompts and drops reply-cycle material after them.
     """
     sid = "tool1234"
     state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
@@ -221,18 +217,18 @@ def test_rewind_counts_real_user_prompts_skipping_tool_loop(tmp_path: Path) -> N
 
     assert verdict == "handled"
     assert reply == "🧠失忆中，请稍候...(2)"
-    # u1's full tool-use round survives intact.
+    # u1's full tool-use round survives intact; anchor u2 kept, u3+replies dropped.
     remaining = _read_jsonl(jsonl)
-    assert len(remaining) == 4
+    assert len(remaining) == 5
     assert remaining[0]["type"] == "user"
     assert remaining[1]["message"]["content"][0]["type"] == "tool_use"
     assert remaining[2]["message"]["content"][0]["type"] == "tool_result"
     assert remaining[3]["message"]["content"][0]["text"] == "a1 reply"
+    assert [_event_text(ev) for ev in remaining[4:]] == ["u2"]
 
 
-def test_rewind_one_drops_whole_tool_use_round(tmp_path: Path) -> None:
-    """`/rewind 1` on a tail with tool use drops the user prompt + tool_use +
-    tool_result + final reply — not just one jsonl line."""
+def test_rewind_one_drops_reply_cycle_keeps_prompt(tmp_path: Path) -> None:
+    """`/rewind 1` on a tail with tool use drops tool_use/tool_result/reply."""
     sid = "tool5678"
     state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -258,7 +254,7 @@ def test_rewind_one_drops_whole_tool_use_round(tmp_path: Path) -> None:
     assert reply == "🧠失忆中，请稍候...(1)"
     remaining = _read_jsonl(jsonl)
     texts = [_event_text(ev) for ev in remaining]
-    assert texts == ["u1", "a1"]
+    assert texts == ["u1", "a1", "u2"]
 
 
 def test_rewind_rejects_zero(tmp_path: Path) -> None:
@@ -323,11 +319,10 @@ def test_rewind_without_sid_returns_error(tmp_path: Path) -> None:
 
 
 def test_rewind_n_exceeds_pairs_still_succeeds(tmp_path: Path) -> None:
-    """N>pairs available — handler should still complete (drop what exists,
-    respawn). Marrow flag still written so the dropped turns never ingest."""
+    """N>pairs available should drop the replies that exist and respawn."""
     sid = "fewer"
     state = BridgeState(model="opus", session_id=sid)
-    _seed_jsonl(
+    jsonl = _seed_jsonl(
         tmp_path,
         sid,
         [
@@ -335,20 +330,23 @@ def test_rewind_n_exceeds_pairs_still_succeeds(tmp_path: Path) -> None:
             _assistant("a1", "2026-06-02T10:00:01.000Z"),
         ],
     )
+    projects_root = tmp_path / ".claude" / "projects"
     hooks = _Hooks()
-    reg = _make_ctx(state=state, hooks=hooks, cwd=str(tmp_path))
+    reg = _make_ctx(
+        state=state, hooks=hooks, cwd=str(tmp_path), projects_root=projects_root
+    )
 
     verdict, reply = reg.dispatch("/rewind 99")
     assert verdict == "handled"
     assert reply is not None
-    # Even if jsonl was untouched (different cwd in test env), respawn fired.
     assert hooks.respawn_calls == [(sid, "opus")]
+    assert [_event_text(ev) for ev in _read_jsonl(jsonl)] == ["u1"]
 
 
 # ── /regen ───────────────────────────────────────────────────────────────────
 
 
-def test_regen_drops_last_pair_respawns_and_replays_user(tmp_path: Path) -> None:
+def test_regen_drops_last_reply_respawns_without_replay(tmp_path: Path) -> None:
     sid = "regen-sid"
     state = BridgeState(model="claude-opus-4-6[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -373,21 +371,17 @@ def test_regen_drops_last_pair_respawns_and_replays_user(tmp_path: Path) -> None
     assert "失忆" in reply
     # Respawn fired with the same sid+model.
     assert hooks.respawn_calls == [(sid, "claude-opus-4-6[1m]")]
-    # The dropped user prompt is pushed back on stdin so cc actually
-    # regenerates — cc's --resume does not auto-replay.
-    assert hooks.replay_calls == ["u2"]
+    assert hooks.replay_calls == []
     # session_block writes removed — clobbered mm- via latest-wins.
     block_calls = [c for c in hooks.audit_calls if c[0] == "session_block"]
     assert not block_calls, "session_block should not be written by regen/rewind"
-    # On-disk: u2 + a2-stale both gone, u1/a1 kept.
+    # On-disk: u2 is kept, stale assistant reply is gone.
     remaining = _read_jsonl(jsonl)
-    assert [_event_text(ev) for ev in remaining] == ["u1", "a1"]
+    assert [_event_text(ev) for ev in remaining] == ["u1", "a1", "u2"]
 
 
-def test_regen_drops_whole_tool_use_round_and_replays_user(tmp_path: Path) -> None:
-    """/regen on a tool-use tail drops the user prompt, tool_use, tool_result,
-    and the final reply; replay_user_text receives the user prompt so cc
-    regenerates it on the fresh provider."""
+def test_regen_drops_tool_use_round_without_replay(tmp_path: Path) -> None:
+    """/regen on a tool-use tail keeps the prompt and drops the reply cycle."""
     sid = "regn1234"
     state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -411,9 +405,32 @@ def test_regen_drops_whole_tool_use_round_and_replays_user(tmp_path: Path) -> No
     assert verdict == "handled"
     assert reply == "🧠失忆中，请稍候..."
     remaining = _read_jsonl(jsonl)
-    assert [_event_text(ev) for ev in remaining] == []
+    assert [_event_text(ev) for ev in remaining] == ["u1"]
     assert hooks.respawn_calls == [(sid, "claude-opus-4-7[1m]")]
-    assert hooks.replay_calls == ["u1"]
+    assert hooks.replay_calls == []
+
+
+def test_regen_with_no_assistant_reply_is_noop(tmp_path: Path) -> None:
+    sid = "pending"
+    state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
+    jsonl = _seed_jsonl(
+        tmp_path,
+        sid,
+        [_user("u1", "2026-06-02T10:00:00.000Z")],
+    )
+    projects_root = tmp_path / ".claude" / "projects"
+    hooks = _Hooks()
+    reg = _make_ctx(
+        state=state, hooks=hooks, cwd=str(tmp_path), projects_root=projects_root
+    )
+
+    verdict, reply = reg.dispatch("/regen")
+
+    assert verdict == "handled"
+    assert reply == "Nothing to regen"
+    assert _read_jsonl(jsonl) == [_user("u1", "2026-06-02T10:00:00.000Z")]
+    assert hooks.respawn_calls == []
+    assert hooks.replay_calls == []
 
 
 def test_regen_without_sid_returns_error(tmp_path: Path) -> None:

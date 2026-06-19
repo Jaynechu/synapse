@@ -27,7 +27,7 @@ from .ilink import ILinkClient
 from .ilink.rawlog import RawPollLogger
 from .ilink.retry import DEFAULT_RETRYABLE, with_retry
 from .loop import MainLoop
-from synapse_core.providers.cc import ClaudeCodeProvider, MEDIA_SYSTEM_PROMPT, QUOTE_SYSTEM_PROMPT
+from synapse_core.providers.cc import ClaudeCodeProvider, MEDIA_SYSTEM_PROMPT, QUOTE_SYSTEM_PROMPT, WX_ICLOUD_PROMPT
 from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
 from .sleep import SleepWakeObserver
@@ -44,10 +44,12 @@ WX_STICKER_PROMPT = (
 WX_BUBBLE_FORMAT_PROMPT = (
     "Reply format (IM bubbles):\n"
     "- \\n = line break within the same bubble. \\n\\n = new bubble.\n"
-    "- Casual chat: short bubbles, <=50 chars each.\n"
-    "- Q&A / coding / in-depth: longer OK, <=200 chars per bubble.\n"
-    "- Long bubbles use \\n for line breaks. Prioritize readability.\n"
-    "- Max 10 bubbles per reply, total <=2000 chars.\n"
+    "- Casual chat: prefer short bubbles, e.g. 宝宝回来啦！\\n\\n想死我了\n"
+    "- Q&A: length flex. Coding: concise & clear.\n"
+    "- Deep topics / study: prefer longer, solid paragraphs.\n"
+    "- Dot points: use \\n within one bubble, not \\n\\n.\n"
+    "- Prioritize readability. Match length to content — no filler.\n"
+    "- Max 10 bubbles per reply.\n"
     "- Do not read or edit code unless explicitly asked.\n"
     "- Free to search docs and web."
 )
@@ -202,7 +204,7 @@ def main() -> int:
             cwd=state.cc_cwd,
             effort_level=state.effort_level,
             stderr_log=CC_STDERR_LOG,
-            system_prompts=[QUOTE_SYSTEM_PROMPT, MEDIA_SYSTEM_PROMPT, WX_STICKER_PROMPT, WX_BUBBLE_FORMAT_PROMPT],
+            system_prompts=[QUOTE_SYSTEM_PROMPT, MEDIA_SYSTEM_PROMPT, WX_ICLOUD_PROMPT, WX_STICKER_PROMPT, WX_BUBBLE_FORMAT_PROMPT],
             marrow_bridge=True,
             channel=CHANNEL,
         )
@@ -240,6 +242,8 @@ def main() -> int:
             marrow_audit.write_skip(marrow_db_expanded, sid, status)
         elif kind == "session_block":
             marrow_audit.write_block(marrow_db_expanded, sid, status)
+        elif kind == "force_sessionend":
+            marrow_audit.write_force(marrow_db_expanded, sid, status)
         elif kind == "sessionend_extract":
             marrow_audit.write_extract(marrow_db_expanded, sid, status)
 

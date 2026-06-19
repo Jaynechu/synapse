@@ -1,4 +1,4 @@
-"""Direct sqlite writer for marrow ``audit_log`` rows used by ``mm-`` / ``mm+``.
+"""Direct sqlite writer for marrow ``audit_log`` rows used by mm controls.
 
 Background
 ----------
@@ -9,6 +9,8 @@ marrow's hooks layer already owns these flags (see
     VALUES ('events', <sid>, 'manual_skip',   'skip' | 'skip_cleared')
     INSERT INTO audit_log (target_table, target_id, action, summary)
     VALUES ('events', <sid>, 'session_block', 'archive' | 'cleared')
+    INSERT INTO audit_log (target_table, target_id, action, summary)
+    VALUES ('events', <sid>, 'force_sessionend', 'mm_plus_flag' | ...)
 
 Marrow's CLI (``mw``) does NOT expose an ``audit-log`` subcommand at the time of
 this commit — only ``add-session`` / ``get-session-model`` /
@@ -37,6 +39,7 @@ logger = logging.getLogger(__name__)
 _TARGET_TABLE = "events"
 _ACTION_MANUAL_SKIP = "manual_skip"
 _ACTION_SESSION_BLOCK = "session_block"
+_ACTION_FORCE_SESSIONEND = "force_sessionend"
 
 
 def _open(db_path: str | Path | None) -> sqlite3.Connection | None:
@@ -90,3 +93,8 @@ def write_block(db_path: str | Path | None, sid: str | None, status: str) -> Non
 def write_extract(db_path: str | Path | None, sid: str | None, status: str) -> None:
     """Append a ``sessionend_extract`` row (e.g. ``reset:mm_plus``)."""
     _insert(db_path, sid, "sessionend_extract", status)
+
+
+def write_force(db_path: str | Path | None, sid: str | None, status: str) -> None:
+    """Append a ``force_sessionend`` row."""
+    _insert(db_path, sid, _ACTION_FORCE_SESSIONEND, status)

@@ -139,6 +139,8 @@ def main() -> int:
             marrow_audit.write_skip(marrow_db, sid, status)
         elif kind == "session_block":
             marrow_audit.write_block(marrow_db, sid, status)
+        elif kind == "force_sessionend":
+            marrow_audit.write_force(marrow_db, sid, status)
         elif kind == "sessionend_extract":
             marrow_audit.write_extract(marrow_db, sid, status)
 

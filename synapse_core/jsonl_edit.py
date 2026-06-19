@@ -7,18 +7,13 @@ respawns cc — cc then re-reads the trimmed history.
 
 Public surface
 --------------
-`drop_last_n_pairs(sid, n, cwd, projects_root)`
-    Remove the last N user/assistant pairs. A "pair" is one user turn
-    plus its (possibly missing) assistant reply, walked from the tail.
-    Non-chat lines (system / summary / queue-operation / ...) are kept
-    verbatim. Returns the dropped events in original file order so the
-    caller can flag them via marrow `audit_log session_block=archive`.
+`drop_last_n_replies(sid, n, cwd, projects_root)`
+    Remove the last N assistant reply cycles while keeping the real user
+    prompts in place. Tool-result frames are dropped with the assistant
+    cycle that produced them. Non-chat lines are kept verbatim.
 
 `extract_user_text(parsed)`
-    Pull the plain text of a real user prompt event so `/regen` can
-    resend it through the freshly-spawned cc — cc does not auto-replay
-    the trailing unanswered prompt after `--resume`, so the bridge has
-    to push it back on stdin itself.
+    Pull the plain text of a real user prompt event.
 
 Both helpers tolerate missing files, malformed lines, and N > pairs
 without raising. Slug derivation reuses `synapse_core.replay.slug_for_cwd`
@@ -127,24 +122,23 @@ def is_real_user_prompt(parsed: dict | None) -> bool:
     return False
 
 
-def drop_last_n_pairs(
+def drop_last_n_replies(
     sid: str,
     n: int,
     cwd: str | None = None,
     projects_root: Path | None = None,
 ) -> list[dict]:
-    """Rewind the last N real user prompts (and everything after them).
+    """Drop the last N assistant reply cycles, keeping user prompts.
 
     A "real user prompt" is a `type:user` entry whose content is the user's
     own text — tool_result entries (also `type:user`) are skipped. The anchor
-    is the Nth real user prompt counted from the tail; every chat line at or
-    after that anchor is dropped (the user prompt, its tool_use turns, the
-    tool_results, and the final assistant reply). Non-chat lines
-    (system / summary / queue) are kept verbatim.
+    is the Nth real user prompt counted from the tail. From that anchor onward,
+    assistant lines and tool_result user lines are dropped; real user prompts
+    and non-chat lines are kept.
 
-    If fewer than N real prompts exist, drops all of them. Returns the
-    dropped chat events in chronological order, or `[]` on missing file,
-    n<=0, or no real prompts.
+    If fewer than N real prompts exist, considers all of them. Returns dropped
+    reply-cycle events in chronological order, or `[]` on missing file, n<=0,
+    no real prompts, or no assistant reply to drop.
     """
     if not sid or n <= 0:
         return []
@@ -167,10 +161,13 @@ def drop_last_n_pairs(
     dropped: list[dict] = []
     kept_lines: list[str] = []
     for idx, (raw, parsed) in enumerate(entries):
-        if idx >= cut_idx and parsed is not None and parsed.get("type") in (
-            "user",
-            "assistant",
-        ):
+        if idx < cut_idx or parsed is None:
+            kept_lines.append(raw)
+            continue
+        event_type = parsed.get("type")
+        if idx == cut_idx and is_real_user_prompt(parsed):
+            kept_lines.append(raw)
+        elif event_type in ("user", "assistant"):
             dropped.append(parsed)
         else:
             kept_lines.append(raw)
@@ -180,6 +177,25 @@ def drop_last_n_pairs(
 
     _atomic_write(path, kept_lines)
     return dropped
+
+
+def drop_last_reply(
+    sid: str,
+    cwd: str | None = None,
+    projects_root: Path | None = None,
+) -> list[dict]:
+    """Drop the last assistant reply cycle."""
+    return drop_last_n_replies(sid, 1, cwd=cwd, projects_root=projects_root)
+
+
+def drop_last_n_pairs(
+    sid: str,
+    n: int,
+    cwd: str | None = None,
+    projects_root: Path | None = None,
+) -> list[dict]:
+    """Compatibility wrapper for the old helper name."""
+    return drop_last_n_replies(sid, n, cwd=cwd, projects_root=projects_root)
 
 
 def extract_user_text(parsed: dict | None) -> str | None:

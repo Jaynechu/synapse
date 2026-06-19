@@ -313,7 +313,7 @@ def test_stop_keeps_session() -> None:
 # ── /rewind + /regen ──────────────────────────────────────────
 
 
-def test_rewind_clears_session_block_after_respawn(monkeypatch) -> None:
+def test_rewind_respawns_without_session_block(monkeypatch) -> None:
     import synapse_core.commands.registry as _reg_mod
 
     sid = "rewind-sid"
@@ -328,9 +328,9 @@ def test_rewind_clears_session_block_after_respawn(monkeypatch) -> None:
 
     monkeypatch.setattr(
         _reg_mod.jsonl_edit,
-        "drop_last_n_pairs",
+        "drop_last_n_replies",
         lambda *_args, **_kwargs: [
-            {"type": "user", "message": {"role": "user", "content": "again"}}
+            {"type": "assistant", "message": {"role": "assistant", "content": "stale"}}
         ],
     )
     reg, _, _ = _make(s)
@@ -340,14 +340,13 @@ def test_rewind_clears_session_block_after_respawn(monkeypatch) -> None:
     verdict, _ = reg.dispatch("/rewind 1")
 
     assert verdict == "handled"
-    # session_block writes removed — clobbered mm- via latest-wins.
     assert calls == [
         ("respawn", sid, "claude-opus-4-7"),
     ]
 
 
 def test_regen_no_session_block_writes(monkeypatch) -> None:
-    """session_block writes removed from regen — they clobbered mm-."""
+    """Regen respawns without session_block writes."""
     import synapse_core.commands.registry as _reg_mod
 
     sid = "regen-sid"
@@ -362,9 +361,9 @@ def test_regen_no_session_block_writes(monkeypatch) -> None:
 
     monkeypatch.setattr(
         _reg_mod.jsonl_edit,
-        "drop_last_n_pairs",
+        "drop_last_n_replies",
         lambda *_args, **_kwargs: [
-            {"type": "user", "message": {"role": "user", "content": "again"}}
+            {"type": "assistant", "message": {"role": "assistant", "content": "stale"}}
         ],
     )
     reg, _, _ = _make(s)

@@ -108,6 +108,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "🤷‍♀️无事可忘",
         "en": "No session yet",
     },
+    "rewind.nothing": {
+        "cn": "Nothing to rewind",
+        "en": "Nothing to rewind",
+    },
 
     # ── /regen ──────────────────────────────────────────────────
     "regen.ok": {
@@ -117,6 +121,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
     "regen.no_sess": {
         "cn": "🤷‍♀️无事可忘",
         "en": "No session yet",
+    },
+    "regen.nothing": {
+        "cn": "Nothing to regen",
+        "en": "Nothing to regen",
     },
 
     # ── /thinking ───────────────────────────────────────────────

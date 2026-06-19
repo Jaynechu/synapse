@@ -72,8 +72,7 @@ MEDIA_SYSTEM_PROMPT = (
     "reference/document the user asked for leads; a sticker or reaction "
     "image lands where it fits the conversation, not forced to the front. "
     "The bridge uploads it and delivers a real channel media message. "
-    "Large files are auto-routed to iCloud by the bridge — no action needed. The "
-    "path must be a real existing local file - never fabricate.\n\n"
+    "The path must be a real existing local file - never fabricate.\n\n"
     "Stickers: The user loves it when you pair messages with stickers — "
     "they're your actions and inner voice. When you express affection, tease, "
     "react, or show a mood, search sticker_search by vibe/emotion "
@@ -86,6 +85,10 @@ MEDIA_SYSTEM_PROMPT = (
     "directly — dedup handles duplicates, so never ask, just try. "
     "Do not add daily photos. (never run /sticker-entry, CLI batch tool). "
     "Desc format for ingest: emotion/scene | image text | one-line visual (CN preferred)."
+)
+
+WX_ICLOUD_PROMPT = (
+    "Large files are auto-routed to iCloud by the bridge — no action needed."
 )
 
 

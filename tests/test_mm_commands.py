@@ -4,11 +4,10 @@ These are single-line bare-text commands (no leading `/`). On match the bridge
 writes two marrow `audit_log` rows for the current sid:
 
   mm-  →  manual_skip = "skip"          AND  session_block = "archive"
-  mm+  →  manual_skip = "skip_cleared"  AND  session_block = "cleared"
+  mm+  →  manual_skip = "skip_cleared"  AND  force_sessionend = "mm_plus_flag"
 
-Latest-wins: a later mm+ overrides an earlier mm- by appending a new pair of
-rows; readers (marrow side `_is_session_blocked` / `_is_manual_skip`) pick the
-highest-id row.
+mm+ deliberately does not clear session_block; mm- keeps its no-ingestion
+contract.
 """
 
 from __future__ import annotations
@@ -66,6 +65,19 @@ def test_write_block_inserts_session_block_row(tmp_path) -> None:
     assert row == ("events", "sid-2", "session_block", "archive")
 
 
+def test_write_force_inserts_force_sessionend_row(tmp_path) -> None:
+    db = tmp_path / "marrow.db"
+    _make_audit_db(db)
+    marrow_audit.write_force(str(db), "sid-3", "mm_plus_flag")
+
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT target_table, target_id, action, summary FROM audit_log"
+    ).fetchone()
+    conn.close()
+    assert row == ("events", "sid-3", "force_sessionend", "mm_plus_flag")
+
+
 def test_writer_no_db_path_is_noop(tmp_path) -> None:
     # Empty / None path = marrow not configured; must not raise.
     marrow_audit.write_skip("", "sid-x", "skip")
@@ -121,15 +133,14 @@ def test_mm_minus_writes_skip_and_block() -> None:
     ]
 
 
-def test_mm_plus_clears_skip_and_block() -> None:
+def test_mm_plus_clears_skip_and_flags_sessionend() -> None:
     reg, calls, _ = _make_registry()
     verdict, reply = reg.dispatch("mm+")
     assert verdict == "handled"
     assert reply == "本窗口加入DB"
     assert calls == [
-        ("sessionend_extract", "sid-current", "reset:mm_plus"),
         ("manual_skip", "sid-current", "skip_cleared"),
-        ("session_block", "sid-current", "cleared"),
+        ("force_sessionend", "sid-current", "mm_plus_flag"),
     ]
 
 
