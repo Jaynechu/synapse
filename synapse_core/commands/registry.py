@@ -639,20 +639,37 @@ class Registry:
         return self._t("rewind.ok", n=n)
 
     def _handle_regen(self) -> str:
-        """Drop the last assistant reply and respawn cc to regenerate it."""
+        """Drop the last user+assistant pair, respawn cc, replay user text."""
         state = self._ctx.state
         sid = state.session_id
         if not sid:
             return self._t("regen.no_sess")
-        dropped = jsonl_edit.drop_last_n_replies(
-            sid, 1, cwd=self._ctx.cc_cwd, projects_root=self._ctx.cc_projects_root
+        dropped, has_remaining = jsonl_edit.drop_last_pair(
+            sid, cwd=self._ctx.cc_cwd, projects_root=self._ctx.cc_projects_root
         )
         if not dropped:
             return self._t("regen.nothing")
-        try:
-            self._ctx.respawn_with_resume(sid, state.model)
-        except Exception:
-            pass
+        replay_text: str | None = None
+        for ev in dropped:
+            text = jsonl_edit.extract_user_text(ev)
+            if text:
+                replay_text = text
+                break
+        if has_remaining:
+            try:
+                self._ctx.respawn_with_resume(sid, state.model)
+            except Exception:
+                pass
+        else:
+            try:
+                self._ctx.forget_session()
+            except Exception:
+                pass
+        if replay_text:
+            try:
+                self._ctx.replay_user_text(replay_text)
+            except Exception:
+                pass
         return self._t("regen.ok")
 
     # ── E-polish: /thinking + /effort + /compact ─────────────────

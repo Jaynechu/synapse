@@ -179,13 +179,52 @@ def drop_last_n_replies(
     return dropped
 
 
-def drop_last_reply(
+def drop_last_pair(
     sid: str,
     cwd: str | None = None,
     projects_root: Path | None = None,
-) -> list[dict]:
-    """Drop the last assistant reply cycle."""
-    return drop_last_n_replies(sid, 1, cwd=cwd, projects_root=projects_root)
+) -> tuple[list[dict], bool]:
+    """Drop the last user+assistant pair for regen. Returns (dropped, has_remaining).
+
+    has_remaining is True if conversation lines survive after the drop
+    (multi-turn), False if the jsonl is now conversation-empty (single-turn).
+    """
+    if not sid:
+        return [], False
+    path = _jsonl_path(sid, cwd, projects_root)
+    if path is None:
+        return [], False
+    entries = _read_lines(path)
+    if not entries:
+        return [], False
+
+    real_indices = [
+        i for i, (_, parsed) in enumerate(entries) if is_real_user_prompt(parsed)
+    ]
+    if not real_indices:
+        return [], False
+
+    cut_idx = real_indices[-1]
+
+    dropped: list[dict] = []
+    kept_lines: list[str] = []
+    for idx, (raw, parsed) in enumerate(entries):
+        if idx < cut_idx or parsed is None:
+            kept_lines.append(raw)
+            continue
+        if parsed.get("type") in ("user", "assistant"):
+            dropped.append(parsed)
+        else:
+            kept_lines.append(raw)
+
+    has_assistant = any(d.get("type") == "assistant" for d in dropped)
+    if not dropped or not has_assistant:
+        return [], False
+
+    has_remaining = len(real_indices) > 1
+
+    _atomic_write(path, kept_lines)
+    return dropped, has_remaining
 
 
 def drop_last_n_pairs(

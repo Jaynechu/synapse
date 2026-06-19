@@ -285,11 +285,11 @@ def test_drop_last_n_replies_drops_tool_result_cycle_keeps_prompt(tmp_path: Path
     assert [_extract_text(e) for e in remaining] == ["u1"]
 
 
-# ── drop_last_reply ─────────────────────────────────────────────────────────
+# ── drop_last_pair (regen) ───────────────────────────────────────────────────
 
 
-def test_drop_last_reply_one_turn_removes_assistant_only(tmp_path: Path) -> None:
-    sid = "reply-one"
+def test_drop_last_pair_one_turn(tmp_path: Path) -> None:
+    sid = "pair-one"
     slug = replay.slug_for_cwd(str(tmp_path))
     jsonl = tmp_path / ".claude" / "projects" / slug / f"{sid}.jsonl"
     events = [
@@ -298,17 +298,16 @@ def test_drop_last_reply_one_turn_removes_assistant_only(tmp_path: Path) -> None
     ]
     _write_jsonl(jsonl, events)
 
-    dropped = jsonl_edit.drop_last_reply(
+    dropped, has_remaining = jsonl_edit.drop_last_pair(
         sid, cwd=str(tmp_path), projects_root=tmp_path / ".claude" / "projects"
     )
-    remaining = _read_jsonl(jsonl)
 
-    assert [_extract_text(e) for e in dropped] == ["a1"]
-    assert [_extract_text(e) for e in remaining] == ["u1"]
+    assert [_extract_text(e) for e in dropped] == ["u1", "a1"]
+    assert has_remaining is False
 
 
-def test_drop_last_reply_three_turns_removes_last_assistant_only(tmp_path: Path) -> None:
-    sid = "reply-three"
+def test_drop_last_pair_three_turns(tmp_path: Path) -> None:
+    sid = "pair-three"
     slug = replay.slug_for_cwd(str(tmp_path))
     jsonl = tmp_path / ".claude" / "projects" / slug / f"{sid}.jsonl"
     events = [
@@ -321,13 +320,14 @@ def test_drop_last_reply_three_turns_removes_last_assistant_only(tmp_path: Path)
     ]
     _write_jsonl(jsonl, events)
 
-    dropped = jsonl_edit.drop_last_reply(
+    dropped, has_remaining = jsonl_edit.drop_last_pair(
         sid, cwd=str(tmp_path), projects_root=tmp_path / ".claude" / "projects"
     )
     remaining = _read_jsonl(jsonl)
 
-    assert [_extract_text(e) for e in dropped] == ["a3"]
-    assert [_extract_text(e) for e in remaining] == ["u1", "a1", "u2", "a2", "u3"]
+    assert [_extract_text(e) for e in dropped] == ["u3", "a3"]
+    assert has_remaining is True
+    assert [_extract_text(e) for e in remaining] == ["u1", "a1", "u2", "a2"]
 
 
 # ── drop_last_n_pairs ───────────────────────────────────────────────────────

@@ -111,6 +111,7 @@ class _Hooks:
         self.respawn_calls: list[tuple[str, str | None]] = []
         self.swap_calls: list[tuple[str | None, str | None]] = []
         self.replay_calls: list[str] = []
+        self.forget_calls: int = 0
 
     def audit(self, kind: str, sid: str, status: str) -> None:
         self.audit_calls.append((kind, sid, status))
@@ -136,7 +137,7 @@ def _make_ctx(
         state=state,
         swap_provider=hooks.swap,
         close_provider=lambda: None,
-        forget_session=lambda: None,
+        forget_session=lambda: setattr(hooks, 'forget_calls', hooks.forget_calls + 1),
         audit_writer=hooks.audit,
         respawn_with_resume=hooks.respawn,
         replay_user_text=hooks.replay,
@@ -346,7 +347,7 @@ def test_rewind_n_exceeds_pairs_still_succeeds(tmp_path: Path) -> None:
 # ── /regen ───────────────────────────────────────────────────────────────────
 
 
-def test_regen_drops_last_reply_respawns_without_replay(tmp_path: Path) -> None:
+def test_regen_drops_pair_respawns_and_replays(tmp_path: Path) -> None:
     sid = "regen-sid"
     state = BridgeState(model="claude-opus-4-6[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -369,19 +370,14 @@ def test_regen_drops_last_reply_respawns_without_replay(tmp_path: Path) -> None:
     assert verdict == "handled"
     assert reply is not None
     assert "失忆" in reply
-    # Respawn fired with the same sid+model.
     assert hooks.respawn_calls == [(sid, "claude-opus-4-6[1m]")]
-    assert hooks.replay_calls == []
-    # session_block writes removed — clobbered mm- via latest-wins.
-    block_calls = [c for c in hooks.audit_calls if c[0] == "session_block"]
-    assert not block_calls, "session_block should not be written by regen/rewind"
-    # On-disk: u2 is kept, stale assistant reply is gone.
+    assert hooks.replay_calls == ["u2"]
     remaining = _read_jsonl(jsonl)
-    assert [_event_text(ev) for ev in remaining] == ["u1", "a1", "u2"]
+    assert [_event_text(ev) for ev in remaining] == ["u1", "a1"]
 
 
-def test_regen_drops_tool_use_round_without_replay(tmp_path: Path) -> None:
-    """/regen on a tool-use tail keeps the prompt and drops the reply cycle."""
+def test_regen_single_turn_with_tool_use_forgets_and_replays(tmp_path: Path) -> None:
+    """/regen on single-turn with tool use: drops pair, forgets session, replays."""
     sid = "regn1234"
     state = BridgeState(model="claude-opus-4-7[1m]", session_id=sid)
     jsonl = _seed_jsonl(
@@ -404,10 +400,9 @@ def test_regen_drops_tool_use_round_without_replay(tmp_path: Path) -> None:
 
     assert verdict == "handled"
     assert reply == "🧠失忆中，请稍候..."
-    remaining = _read_jsonl(jsonl)
-    assert [_event_text(ev) for ev in remaining] == ["u1"]
-    assert hooks.respawn_calls == [(sid, "claude-opus-4-7[1m]")]
-    assert hooks.replay_calls == []
+    assert hooks.respawn_calls == []
+    assert hooks.forget_calls == 1
+    assert hooks.replay_calls == ["u1"]
 
 
 def test_regen_with_no_assistant_reply_is_noop(tmp_path: Path) -> None:

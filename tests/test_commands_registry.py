@@ -346,36 +346,40 @@ def test_rewind_respawns_without_session_block(monkeypatch) -> None:
 
 
 def test_regen_no_session_block_writes(monkeypatch) -> None:
-    """Regen respawns without session_block writes."""
+    """Regen drops pair, respawns, replays user text."""
     import synapse_core.commands.registry as _reg_mod
 
     sid = "regen-sid"
     s = BridgeState(model="claude-opus-4-7", session_id=sid)
     calls: list[tuple] = []
-
-    def audit(kind: str, call_sid: str, status: str) -> None:
-        calls.append(("audit", kind, call_sid, status))
+    replayed: list[str] = []
 
     def respawn(call_sid: str, model: str | None) -> None:
         calls.append(("respawn", call_sid, model))
 
+    def replay(text: str) -> None:
+        replayed.append(text)
+
     monkeypatch.setattr(
         _reg_mod.jsonl_edit,
-        "drop_last_n_replies",
-        lambda *_args, **_kwargs: [
-            {"type": "assistant", "message": {"role": "assistant", "content": "stale"}}
-        ],
+        "drop_last_pair",
+        lambda *_args, **_kwargs: (
+            [
+                {"type": "user", "message": {"role": "user", "content": "hi"}},
+                {"type": "assistant", "message": {"role": "assistant", "content": "stale"}},
+            ],
+            True,
+        ),
     )
     reg, _, _ = _make(s)
-    reg._ctx.audit_writer = audit
     reg._ctx.respawn_with_resume = respawn
+    reg._ctx.replay_user_text = replay
 
     verdict, _ = reg.dispatch("/regen")
 
     assert verdict == "handled"
-    assert calls == [
-        ("respawn", sid, "claude-opus-4-7"),
-    ]
+    assert calls == [("respawn", sid, "claude-opus-4-7")]
+    assert replayed == ["hi"]
 
 
 # ── unknown / forward ─────────────────────────────────────────
