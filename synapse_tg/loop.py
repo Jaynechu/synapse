@@ -485,6 +485,12 @@ class TgLoop:
         """
         if self._provider is not None:
             self._user_initiated_close = True
+            # Suppress intermediate SessionEnd so regen/rewind doesn't archive truncated jsonl.
+            _suppress = Path.home() / ".config" / "marrow" / f".regen_suppress_{sid}"
+            try:
+                _suppress.touch(exist_ok=True)
+            except OSError:
+                pass
             try:
                 self._provider.close()
             except Exception:

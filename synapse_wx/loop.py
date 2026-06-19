@@ -870,6 +870,12 @@ class MainLoop:
         process flushing stale events.
         """
         if self._provider is not None:
+            # Suppress intermediate SessionEnd so regen/rewind doesn't archive truncated jsonl.
+            _suppress = Path.home() / ".config" / "marrow" / f".regen_suppress_{sid}"
+            try:
+                _suppress.touch(exist_ok=True)
+            except OSError:
+                pass
             try:
                 self._provider.close()
             except Exception as e:

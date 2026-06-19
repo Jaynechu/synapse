@@ -564,3 +564,94 @@ def test_loop_respawn_with_resume_no_live_provider_still_spawns(tmp_path: Path) 
     assert calls == [{"model": "opus", "resume_sid": "sid-y"}]
     assert loop._provider is not None
     assert loop._provider.is_alive()
+
+
+def test_wx_respawn_with_resume_writes_suppress_flag_before_close(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from datetime import datetime
+
+    from synapse_core.debounce import InboundBuffer
+    from synapse_wx.loop import MainLoop
+    from synapse_core.providers.mock import EchoProvider
+    from synapse_core.sessionend.tracker import SessionTracker
+
+    fake_home = tmp_path / "home"
+    marrow_dir = fake_home / ".config" / "marrow"
+    marrow_dir.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    expected = marrow_dir / ".regen_suppress_sid-z"
+
+    class CloseCheckingProvider(EchoProvider):
+        def close(self) -> None:
+            assert expected.exists()
+            super().close()
+
+    state = BridgeState(model="opus", session_id="sid-z")
+    sessions = SessionTracker(state_path=tmp_path / "sessions.json")
+
+    def factory(model=None, resume_sid=None):
+        p = EchoProvider()
+        p.spawn()
+        return p
+
+    loop = MainLoop(
+        ilink=object(),
+        provider_factory=factory,
+        state=state,
+        sessions=sessions,
+        idle_loop=None,
+        buffer=InboundBuffer(),
+        poll_interval_sec=0.01,
+        wallclock=lambda: datetime(2026, 6, 2, 12, 0),
+        sleeper=lambda _s: None,
+        alert_dir=tmp_path / "alerts",
+        channel="wx",
+        last_active_path=tmp_path / "last_active.json",
+        channel_label="CC-WX",
+    )
+    live = CloseCheckingProvider()
+    live.spawn()
+    loop._provider = live
+
+    loop.respawn_with_resume("sid-z", "opus")
+
+    assert expected.exists()
+    assert expected.parent == fake_home / ".config" / "marrow"
+    assert not live.is_alive()
+
+
+def test_tg_respawn_with_resume_writes_suppress_flag_before_close(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    from synapse_core.providers.mock import EchoProvider
+    from synapse_tg.config import TgConfig
+    from synapse_tg.loop import TgLoop
+
+    fake_home = tmp_path / "home"
+    marrow_dir = fake_home / ".config" / "marrow"
+    marrow_dir.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    expected = marrow_dir / ".regen_suppress_sid-tg"
+
+    class CloseCheckingProvider(EchoProvider):
+        def close(self) -> None:
+            assert expected.exists()
+            super().close()
+
+    cfg = TgConfig(data_dir=tmp_path / "tg-data")
+    loop = TgLoop(cfg)
+    live = CloseCheckingProvider()
+    live.spawn()
+    loop._provider = live
+
+    new_provider = EchoProvider()
+    monkeypatch.setattr(loop, "_make_provider", lambda: new_provider)
+
+    loop.respawn_with_resume("sid-tg", "opus")
+
+    assert expected.exists()
+    assert expected.parent == fake_home / ".config" / "marrow"
+    assert not live.is_alive()
+    assert loop._provider is new_provider
+    assert loop._provider.is_alive()
