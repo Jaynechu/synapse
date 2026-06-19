@@ -140,6 +140,7 @@ def test_mm_plus_clears_skip_and_flags_sessionend() -> None:
     assert reply == "本窗口加入DB"
     assert calls == [
         ("manual_skip", "sid-current", "skip_cleared"),
+        ("session_block", "sid-current", "cleared"),
         ("force_sessionend", "sid-current", "mm_plus_flag"),
     ]
 

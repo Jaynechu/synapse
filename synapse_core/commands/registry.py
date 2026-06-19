@@ -596,6 +596,7 @@ class Registry:
         if not sid:
             return self._t("mm.clear_no_sess")
         self._ctx.audit_writer("manual_skip", sid, "skip_cleared")
+        self._ctx.audit_writer("session_block", sid, "cleared")
         self._ctx.audit_writer("force_sessionend", sid, _MM_PLUS_FLAG)
         return self._t("mm.clear")
 
