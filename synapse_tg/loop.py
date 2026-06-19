@@ -22,7 +22,7 @@ from telegram import Bot, Update
 from telegram.ext import ContextTypes
 
 from synapse_core import bridge_state_store
-from synapse_core.marrow_session import get_session_created_at, get_session_effort
+from synapse_core.marrow_session import get_session_created_at, get_session_effort, regen_suppress_path
 from synapse_core.commands import messages
 from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.debounce import InboundBuffer
@@ -485,18 +485,20 @@ class TgLoop:
         """
         if self._provider is not None:
             self._user_initiated_close = True
-            # Suppress intermediate SessionEnd so regen/rewind doesn't archive truncated jsonl.
-            _suppress = Path.home() / ".config" / "marrow" / f".regen_suppress_{sid}"
             try:
-                _suppress.touch(exist_ok=True)
-            except OSError:
-                pass
-            try:
-                self._provider.close()
-            except Exception:
-                pass
-            self._provider = None
-            self._user_initiated_close = False
+                # Suppress intermediate SessionEnd so regen/rewind doesn't archive truncated jsonl.
+                _suppress = regen_suppress_path(sid)
+                try:
+                    _suppress.touch(exist_ok=True)
+                except OSError:
+                    pass
+                try:
+                    self._provider.close()
+                except Exception:
+                    pass
+                self._provider = None
+            finally:
+                self._user_initiated_close = False
         self._death_count = 0
 
         # Check if the session jsonl still exists on disk. The session

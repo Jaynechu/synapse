@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from synapse_core import last_active
-from synapse_core.marrow_session import get_session_created_at
+from synapse_core.marrow_session import get_session_created_at, regen_suppress_path
 from synapse_core.alerts import AlertSink
 from synapse_core.anchor import quote_prefix, time_anchor
 from synapse_core.commands import messages
@@ -871,7 +871,7 @@ class MainLoop:
         """
         if self._provider is not None:
             # Suppress intermediate SessionEnd so regen/rewind doesn't archive truncated jsonl.
-            _suppress = Path.home() / ".config" / "marrow" / f".regen_suppress_{sid}"
+            _suppress = regen_suppress_path(sid)
             try:
                 _suppress.touch(exist_ok=True)
             except OSError:

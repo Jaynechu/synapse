@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 _MODEL_RE = re.compile(rb'"model"\s*:\s*"(claude-[^"]+)"')
 
 
+def regen_suppress_path(sid: str) -> Path:
+    """Path for the regen/rewind suppress flag. Must match marrow config.DATA_DIR default."""
+    return Path.home() / ".config" / "marrow" / f".regen_suppress_{sid}"
+
+
 def _format(template: str, **fields: str) -> list[str] | None:
     """Substitute templated fields and shlex-split for subprocess. Returns
     None when the template is empty (marrow integration opted-out)."""
