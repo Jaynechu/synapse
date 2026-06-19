@@ -63,23 +63,21 @@ def test_comma_is_not_a_split_boundary() -> None:
 
 
 def test_runon_exceeds_hard_max_force_word_cut() -> None:
-    # No punctuation, longer than DEFAULT_HARD_MAX (200) — pathological
-    # fallback kicks in: word-boundary cuts, never mid-word.
+    hard_max = 200
     text = ("alpha beta gamma delta epsilon zeta " * 15).strip()
-    assert len(text) > DEFAULT_HARD_MAX
-    out = split_for_wechat(text)
+    assert len(text) > hard_max
+    out = split_for_wechat(text, hard_max=hard_max)
     assert len(out) >= 2
-    assert all(len(b) <= DEFAULT_HARD_MAX for b in out)
+    assert all(len(b) <= hard_max for b in out)
     rejoined = " ".join(out)
     for word in text.split():
         assert word in rejoined
 
 
 def test_pure_cjk_runon_exceeds_hard_max_flat_cut() -> None:
-    # Pure CJK, no whitespace, longer than hard_max — falls back to a flat
-    # cut at hard_max (preserves all characters).
-    text = "字" * (DEFAULT_HARD_MAX + 50)
-    out = split_for_wechat(text)
+    hard_max = 200
+    text = "字" * (hard_max + 50)
+    out = split_for_wechat(text, hard_max=hard_max)
     assert len(out) >= 2
     assert "".join(out) == text
 
@@ -263,12 +261,12 @@ def test_long_paragraph_keeps_quote_intact_on_split() -> None:
 
 
 def test_long_paragraph_splits_under_hard_max() -> None:
-    # >hard_max chars triggers sentence-split + accrete back to ≤ hard_max.
+    hard_max = 200
     text = " ".join(["Foo bar baz quux."] * 15)
-    assert len(text) > 200
-    out = split_for_wechat(text)
+    assert len(text) > hard_max
+    out = split_for_wechat(text, hard_max=hard_max)
     assert len(out) >= 2
-    assert all(len(b) <= 200 for b in out)
+    assert all(len(b) <= hard_max for b in out)
     assert " ".join(out) == text
 
 
