@@ -65,8 +65,8 @@ _LIST_ITEM = re.compile(r"^\s*[-·*]\s+")
 # Paragraph ceiling. A paragraph (one source line) at or under this stays a
 # single bubble; over this we fall back to sentence-split + accrete back up
 # to the same ceiling. Tuned to keep bubbles within ~6-8 wx lines.
-DEFAULT_HARD_MAX = 200
-MAX_WX_BUBBLES = 10
+DEFAULT_HARD_MAX = 99999
+MAX_WX_BUBBLES = 99
 
 # /thinking: emit cc's plaintext thinking as ONE wx bubble prefixed 🧠.
 # Test-drive: no splitting; we want to see how wx renders a long single

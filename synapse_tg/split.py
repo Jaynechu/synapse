@@ -16,7 +16,7 @@ _CLOSE_BRACKETS = "」』）)】〕]》〉"
 _CLOSING_TRAILERS = _CLOSE_BRACKETS + "\"'"
 
 DEFAULT_LIMIT = 4096
-_PARA_SOFT_CAP = 500
+_PARA_SOFT_CAP = 99999
 
 
 def _is_sentence_end(line: str, i: int) -> bool:
