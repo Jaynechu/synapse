@@ -478,7 +478,11 @@ class TgLoop:
         self._provider = None
 
     def respawn_with_resume(self, sid: str, model: str | None) -> None:
-        """Close current provider and spawn fresh with --resume."""
+        """Close current provider and spawn fresh with --resume.
+
+        If the session was killed and its index entry removed from
+        ~/.claude/sessions/, fallback to --create instead.
+        """
         if self._provider is not None:
             self._user_initiated_close = True
             try:
@@ -488,14 +492,39 @@ class TgLoop:
             self._provider = None
             self._user_initiated_close = False
         self._death_count = 0
+
+        # Check if sid still exists in ~/.claude/sessions index.
+        # If process was killed, the PID json is gone, so cc --resume will fail.
+        use_resume = True
+        sessions_dir = Path.home() / ".claude" / "sessions"
+        if sessions_dir.exists():
+            found = False
+            try:
+                for json_file in sessions_dir.glob("*.json"):
+                    try:
+                        data = json.loads(json_file.read_text())
+                        if data.get("sessionId") == sid:
+                            found = True
+                            break
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.warning("failed to check session index: %s", e)
+            if not found:
+                logger.warning("session %s not in ~/.claude/sessions, fallback to --create", sid)
+                use_resume = False
+
         self._state.session_id = sid
         if model:
             self._state.model = model
         self._provider = self._make_provider()
+        # Override resume_sid if fallback to --create is needed.
+        if not use_resume:
+            self._provider.resume_sid = None
         self._provider.spawn()
         self._state.usage_total = {}
         self._state.last_assistant_usage = {}
-        logger.info("respawn_with_resume sid=%s model=%s", sid, model)
+        logger.info("respawn_with_resume sid=%s model=%s (resume=%s)", sid, model, use_resume)
 
     def replay_user_text(self, text: str) -> None:
         """Enqueue text on the inbound buffer for the next flush cycle."""

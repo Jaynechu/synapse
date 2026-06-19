@@ -28,7 +28,7 @@ class TgConfig:
     cc_projects_dir: str = "~/.claude/projects"
 
     # Marrow integration (all empty = marrow disabled)
-    marrow_db: str = ""
+    marrow_db: str = "~/.config/marrow/marrow.db"
     session_record_command: str = ""
     session_get_model_command: str = ""
     session_cwd_command: str = ""
