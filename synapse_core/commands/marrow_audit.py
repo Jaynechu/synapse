@@ -85,3 +85,8 @@ def write_skip(db_path: str | Path | None, sid: str | None, status: str) -> None
 def write_block(db_path: str | Path | None, sid: str | None, status: str) -> None:
     """Append a ``session_block`` row. ``status`` is ``"archive"`` or ``"cleared"``."""
     _insert(db_path, sid, _ACTION_SESSION_BLOCK, status)
+
+
+def write_extract(db_path: str | Path | None, sid: str | None, status: str) -> None:
+    """Append a ``sessionend_extract`` row (e.g. ``reset:mm_plus``)."""
+    _insert(db_path, sid, "sessionend_extract", status)

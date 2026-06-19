@@ -240,6 +240,8 @@ def main() -> int:
             marrow_audit.write_skip(marrow_db_expanded, sid, status)
         elif kind == "session_block":
             marrow_audit.write_block(marrow_db_expanded, sid, status)
+        elif kind == "sessionend_extract":
+            marrow_audit.write_extract(marrow_db_expanded, sid, status)
 
     def _compact_handler() -> str:
         vs = main_loop.state.voice_style if main_loop else None

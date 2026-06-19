@@ -139,6 +139,8 @@ def main() -> int:
             marrow_audit.write_skip(marrow_db, sid, status)
         elif kind == "session_block":
             marrow_audit.write_block(marrow_db, sid, status)
+        elif kind == "sessionend_extract":
+            marrow_audit.write_extract(marrow_db, sid, status)
 
     def _send_extra_bubbles(bubbles: list[str]) -> None:
         loop._queued_extra_bubbles.extend(bubbles)
