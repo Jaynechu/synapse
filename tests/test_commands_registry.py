@@ -310,6 +310,77 @@ def test_stop_keeps_session() -> None:
     assert s.session_id == "sid-keep"
 
 
+# ── /rewind + /regen ──────────────────────────────────────────
+
+
+def test_rewind_clears_session_block_after_respawn(monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+
+    sid = "rewind-sid"
+    s = BridgeState(model="claude-opus-4-7", session_id=sid)
+    calls: list[tuple] = []
+
+    def audit(kind: str, call_sid: str, status: str) -> None:
+        calls.append(("audit", kind, call_sid, status))
+
+    def respawn(call_sid: str, model: str | None) -> None:
+        calls.append(("respawn", call_sid, model))
+
+    monkeypatch.setattr(
+        _reg_mod.jsonl_edit,
+        "drop_last_n_pairs",
+        lambda *_args, **_kwargs: [
+            {"type": "user", "message": {"role": "user", "content": "again"}}
+        ],
+    )
+    reg, _, _ = _make(s)
+    reg._ctx.audit_writer = audit
+    reg._ctx.respawn_with_resume = respawn
+
+    verdict, _ = reg.dispatch("/rewind 1")
+
+    assert verdict == "handled"
+    assert calls == [
+        ("audit", "session_block", sid, "archive"),
+        ("respawn", sid, "claude-opus-4-7"),
+        ("audit", "session_block", sid, "cleared"),
+    ]
+
+
+def test_regen_clears_session_block_after_respawn(monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+
+    sid = "regen-sid"
+    s = BridgeState(model="claude-opus-4-7", session_id=sid)
+    calls: list[tuple] = []
+
+    def audit(kind: str, call_sid: str, status: str) -> None:
+        calls.append(("audit", kind, call_sid, status))
+
+    def respawn(call_sid: str, model: str | None) -> None:
+        calls.append(("respawn", call_sid, model))
+
+    monkeypatch.setattr(
+        _reg_mod.jsonl_edit,
+        "drop_last_n_pairs",
+        lambda *_args, **_kwargs: [
+            {"type": "user", "message": {"role": "user", "content": "again"}}
+        ],
+    )
+    reg, _, _ = _make(s)
+    reg._ctx.audit_writer = audit
+    reg._ctx.respawn_with_resume = respawn
+
+    verdict, _ = reg.dispatch("/regen")
+
+    assert verdict == "handled"
+    assert calls == [
+        ("audit", "session_block", sid, "archive"),
+        ("respawn", sid, "claude-opus-4-7"),
+        ("audit", "session_block", sid, "cleared"),
+    ]
+
+
 # ── unknown / forward ─────────────────────────────────────────
 
 
