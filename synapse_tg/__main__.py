@@ -30,7 +30,7 @@ CHANNEL = "tg"
 
 
 def main() -> int:
-    configure_logging(Path.home() / "Library/Logs/synapse-tg.log")
+    configure_logging(Path.home() / ".config/marrow/logs/synapse-tg.log")
     cfg = load_config()
     if cfg.ack_overrides:
         messages.load_overrides(cfg.ack_overrides)
