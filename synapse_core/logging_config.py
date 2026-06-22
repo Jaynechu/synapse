@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 import os
 import sys
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-MAX_BYTES = 1 * 1024 * 1024
-BACKUP_COUNT = 10
+BACKUP_COUNT = 14
 
 
 def configure_logging(log_path: Path) -> None:
@@ -31,10 +30,11 @@ def configure_logging(log_path: Path) -> None:
             root.removeHandler(handler)
             handler.close()
 
-    file_handler = RotatingFileHandler(
+    file_handler = TimedRotatingFileHandler(
         log_path,
-        maxBytes=MAX_BYTES,
+        when="midnight",
         backupCount=BACKUP_COUNT,
+        encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(level)

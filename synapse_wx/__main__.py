@@ -102,7 +102,7 @@ def _wrap_ilink_with_alert_hook(ilink: ILinkClient, alerts: AlertSink) -> None:
 
 
 def main() -> int:
-    configure_logging(Path.home() / ".config/marrow/logs/synapse-wx.log")
+    configure_logging(Path.home() / ".config/marrow/logs/synapse-wx/synapse-wx.log")
     cfg = load_config()
     if cfg.ack_overrides:
         cmd_messages.load_overrides(cfg.ack_overrides)
