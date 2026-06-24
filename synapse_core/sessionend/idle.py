@@ -45,6 +45,7 @@ class IdleFireLoop:
         audit_log: Path,
         sessionend_err_log: Path,
         channel: str,
+        mid_sessionend_command: str = "",
         idle_threshold_sec: int = DEFAULT_IDLE_THRESHOLD_SEC,
         scan_interval_sec: int = DEFAULT_SCAN_INTERVAL_SEC,
         cc_projects_dir: Path = DEFAULT_CC_PROJECTS_DIR,
@@ -57,6 +58,7 @@ class IdleFireLoop:
     ) -> None:
         self._sessions = sessions
         self._command_template = command_template or ""
+        self._mid_command = mid_sessionend_command or ""
         self._idle_threshold_sec = idle_threshold_sec
         self._scan_interval_sec = scan_interval_sec
         self._cc_projects_dir = Path(cc_projects_dir)
@@ -116,6 +118,8 @@ class IdleFireLoop:
             try:
                 if self._maybe_fire(user_id, sid, now):
                     fired.append(sid)
+                elif self._maybe_mid_fire(user_id, sid, now):
+                    pass
             except Exception as e:
                 logger.warning("idle_fire scan failed for sid=%s: %s", sid[:8], e)
         return fired
@@ -207,6 +211,54 @@ class IdleFireLoop:
                     sid[:8],
                 )
             return False
+
+    def _maybe_mid_fire(self, user_id: str, sid: str, now: float) -> bool:
+        if not self._mid_command or not sid:
+            return False
+        owner = session_lock.holder(sid)
+        if owner and owner != self._channel:
+            return False
+        jsonl = self._find_jsonl(sid)
+        if jsonl is None:
+            return False
+        idle = now - jsonl.stat().st_mtime
+        if idle >= self._idle_threshold_sec:
+            return False
+
+        mid_marker = self._marker_dir / f".mid_fired.{sid}"
+        if (
+            mid_marker.exists()
+            and now - mid_marker.stat().st_mtime < self._scan_interval_sec
+        ):
+            return False
+
+        cmd_str = (
+            self._mid_command
+            .replace("{sid}", sid)
+            .replace("{jsonl}", str(jsonl))
+            .replace("{channel}", self._channel)
+        )
+        argv = shlex.split(cmd_str)
+        if not argv:
+            return False
+        try:
+            subprocess.Popen(  # noqa: S603 - cmd template is operator-supplied config
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except (OSError, FileNotFoundError) as e:
+            logger.warning(
+                "Failed to spawn mid-session scan for sid=%s: %s", sid[:8], e
+            )
+            return False
+
+        self._touch_marker(mid_marker)
+        self._audit(f"kind=mid_scan sid={sid}")
+        return True
 
     def _find_jsonl(self, sid: str) -> Path | None:
         if not self._cc_projects_dir.is_dir():

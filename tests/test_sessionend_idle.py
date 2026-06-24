@@ -119,6 +119,154 @@ def test_does_not_fire_under_threshold(env) -> None:
     assert not (env["markers"] / ".fired.sid-bbbbbbbb").exists()
 
 
+def test_mid_fire_returns_false_when_command_empty(env) -> None:
+    clock = FakeClock()
+    sid = "sid-mid00001"
+    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
+
+    loop = _build_loop(env, "python -m marrow.sessionend_async {sid}", clock)
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
+    ):
+        fired = loop._maybe_mid_fire("u1", sid, clock.now)
+
+    assert fired is False
+    popen.assert_not_called()
+
+
+def test_mid_fire_returns_false_when_session_is_idle(env) -> None:
+    clock = FakeClock()
+    sid = "sid-mid00002"
+    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 7 * HOUR)
+
+    loop = IdleFireLoop(
+        sessions=env["tracker"],
+        command_template="python -m marrow.sessionend_async {sid}",
+        mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
+        marker_dir=env["markers"],
+        audit_log=env["audit"],
+        sessionend_err_log=env["err_log"],
+        channel="wx",
+        idle_threshold_sec=6 * HOUR,
+        scan_interval_sec=30 * 60,
+        cc_projects_dir=env["projects"],
+        clock=clock,
+        sleeper=lambda _s: None,
+        spawn_probe_sec=0.0,
+    )
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
+    ):
+        fired = loop._maybe_mid_fire("u1", sid, clock.now)
+
+    assert fired is False
+    popen.assert_not_called()
+
+
+def test_mid_fire_spawns_for_active_session(env) -> None:
+    clock = FakeClock()
+    sid = "sid-mid00003"
+    jsonl = _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
+
+    loop = IdleFireLoop(
+        sessions=env["tracker"],
+        command_template="python -m marrow.sessionend_async {sid}",
+        mid_sessionend_command=(
+            "python -m marrow.mid_scan --sid {sid} --jsonl-path {jsonl} "
+            "--channel {channel}"
+        ),
+        marker_dir=env["markers"],
+        audit_log=env["audit"],
+        sessionend_err_log=env["err_log"],
+        channel="wx",
+        idle_threshold_sec=6 * HOUR,
+        scan_interval_sec=30 * 60,
+        cc_projects_dir=env["projects"],
+        clock=clock,
+        sleeper=lambda _s: None,
+        spawn_probe_sec=0.0,
+    )
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
+    ):
+        fired = loop._maybe_mid_fire("u1", sid, clock.now)
+
+    assert fired is True
+    popen.assert_called_once()
+    args, kwargs = popen.call_args
+    assert args[0] == [
+        "python",
+        "-m",
+        "marrow.mid_scan",
+        "--sid",
+        sid,
+        "--jsonl-path",
+        str(jsonl),
+        "--channel",
+        "wx",
+    ]
+    assert kwargs["stdin"] is subprocess.DEVNULL
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
+    assert kwargs["close_fds"] is True
+    assert kwargs["start_new_session"] is True
+    assert (env["markers"] / f".mid_fired.{sid}").exists()
+    assert f"kind=mid_scan sid={sid}" in env["audit"].read_text()
+
+
+def test_mid_fire_marker_rate_limits(env) -> None:
+    clock = FakeClock()
+    sid = "sid-mid00004"
+    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
+
+    loop = IdleFireLoop(
+        sessions=env["tracker"],
+        command_template="python -m marrow.sessionend_async {sid}",
+        mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
+        marker_dir=env["markers"],
+        audit_log=env["audit"],
+        sessionend_err_log=env["err_log"],
+        channel="wx",
+        idle_threshold_sec=6 * HOUR,
+        scan_interval_sec=30 * 60,
+        cc_projects_dir=env["projects"],
+        clock=clock,
+        sleeper=lambda _s: None,
+        spawn_probe_sec=0.0,
+    )
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
+    ):
+        first = loop._maybe_mid_fire("u1", sid, clock.now)
+        clock.advance(60)
+        second = loop._maybe_mid_fire("u1", sid, clock.now)
+
+    assert first is True
+    assert second is False
+    assert popen.call_count == 1
+
+
+def test_tick_once_calls_mid_fire_for_non_idle_fired_session(env) -> None:
+    clock = FakeClock()
+    sid = "sid-mid00005"
+    env["tracker"].set("u1", sid)
+    loop = _build_loop(env, "python -m marrow.sessionend_async {sid}", clock)
+
+    with (
+        patch.object(loop, "_maybe_fire", return_value=False) as maybe_fire,
+        patch.object(loop, "_maybe_mid_fire", return_value=True) as maybe_mid_fire,
+    ):
+        fired = loop.tick_once()
+
+    assert fired == []
+    maybe_fire.assert_called_once_with("u1", sid, clock.now)
+    maybe_mid_fire.assert_called_once_with("u1", sid, clock.now)
+
+
 def test_marker_blocks_refire_until_new_activity(env) -> None:
     clock = FakeClock()
     env["tracker"].set("u1", "sid-cccccccc")

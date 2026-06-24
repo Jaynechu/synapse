@@ -167,9 +167,23 @@ def main() -> int:
         if ml is not None:
             ml.close_provider()
 
+    mid_cmd = " ".join(
+        (
+            shlex.quote(sys.executable),
+            "-m",
+            "marrow.mid_scan",
+            "--sid",
+            "{sid}",
+            "--jsonl-path",
+            "{jsonl}",
+            "--channel",
+            "wx",
+        )
+    )
     idle_loop = IdleFireLoop(
         sessions=sessions,
         command_template=cfg.sessionend_command,
+        mid_sessionend_command=mid_cmd,
         marker_dir=SESSION_MARKER_DIR,
         audit_log=SESSION_AUDIT_LOG,
         sessionend_err_log=SESSIONEND_ERR_LOG,
