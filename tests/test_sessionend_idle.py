@@ -214,7 +214,7 @@ def test_mid_fire_spawns_for_active_session(env) -> None:
     assert kwargs["close_fds"] is True
     assert kwargs["start_new_session"] is True
     assert (env["markers"] / f".mid_fired.{sid}").exists()
-    assert f"kind=mid_scan sid={sid}" in env["audit"].read_text()
+    assert f"kind=mid_scan sid={sid[:8]}" in env["audit"].read_text()
 
 
 def test_mid_fire_marker_rate_limits(env) -> None:

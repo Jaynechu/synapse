@@ -177,7 +177,7 @@ def main() -> int:
             "--jsonl-path",
             "{jsonl}",
             "--channel",
-            "wx",
+            CHANNEL,
         )
     )
     idle_loop = IdleFireLoop(

@@ -257,7 +257,7 @@ class IdleFireLoop:
             return False
 
         self._touch_marker(mid_marker)
-        self._audit(f"kind=mid_scan sid={sid}")
+        self._audit(f"kind=mid_scan sid={sid[:8]}")
         return True
 
     def _find_jsonl(self, sid: str) -> Path | None:
