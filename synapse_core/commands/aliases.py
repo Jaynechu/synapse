@@ -19,7 +19,7 @@ MODEL_ALIASES: dict[str, str] = {
 
 # Aliases safe for bare-text natural matching (no slash prefix).
 # Digit-only keys excluded — too easy to misfire in wx/tg chat.
-NATURAL_ALIASES: set[str] = {k for k in MODEL_ALIASES if not k.replace(".", "").isdigit()}
+NATURAL_ALIASES: set[str] = {k for k in MODEL_ALIASES if not k.isdigit()}
 
 MODEL_NAMES: dict[str, str] = {
     "claude-opus-4-6": "Opus 4.6",
