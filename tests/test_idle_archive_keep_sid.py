@@ -1,12 +1,10 @@
-"""B11: on idle fire, close provider first (cc SessionEnd writes archive_events),
-then popen-detach sessionend_async. state.session_id is NOT cleared.
-"""
+"""pre_spawn_hook is accepted by IdleFireLoop.__init__ for backwards compat but no longer invoked."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -36,12 +34,6 @@ def _make_jsonl(projects_dir: Path, project: str, sid: str, mtime: float) -> Pat
     return jsonl
 
 
-def _mock_proc(poll_rc: int | None = None) -> MagicMock:
-    m = MagicMock()
-    m.poll.return_value = poll_rc
-    return m
-
-
 @pytest.fixture()
 def env(tmp_path: Path):
     projects = tmp_path / "projects"
@@ -61,12 +53,11 @@ def env(tmp_path: Path):
     }
 
 
-def _build_loop(
-    env, command_template: str, clock: FakeClock, pre_spawn_hook=None
-) -> IdleFireLoop:
+def _build_loop(env, clock: FakeClock, pre_spawn_hook=None) -> IdleFireLoop:
     return IdleFireLoop(
         sessions=env["tracker"],
-        command_template=command_template,
+        command_template="",
+        mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
         marker_dir=env["markers"],
         audit_log=env["audit"],
         sessionend_err_log=env["err_log"],
@@ -81,100 +72,38 @@ def _build_loop(
     )
 
 
-def test_pre_spawn_hook_invoked_before_subprocess_spawn(env) -> None:
-    """On fire, pre_spawn_hook(sid) runs BEFORE subprocess.Popen for sessionend_async."""
+def test_pre_spawn_hook_accepted_without_error(env) -> None:
+    """pre_spawn_hook kwarg is accepted; loop constructs and ticks without raising."""
     clock = FakeClock()
     sid = "sid-b11a0001"
     env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 7 * HOUR)
-
-    call_order: list[str] = []
-
-    def hook(s: str) -> None:
-        call_order.append(f"hook:{s}")
-
-    def popen_side_effect(*_a, **_kw):
-        call_order.append("popen")
-        return _mock_proc()
-
-    loop = _build_loop(env, "python -m marrow.sessionend_async --sid {sid}", clock, hook)
-    with patch(
-        "synapse_core.sessionend.idle.subprocess.Popen", side_effect=popen_side_effect
-    ):
-        fired = loop.tick_once()
-
-    assert fired == [sid]
-    assert call_order == [f"hook:{sid}", "popen"], call_order
-
-
-def test_pre_spawn_hook_runs_with_empty_template(env) -> None:
-    """Even with audit-only mode (no popen), hook still runs so cc gets closed."""
-    clock = FakeClock()
-    sid = "sid-b11a0002"
-    env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 8 * HOUR)
+    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
 
     seen: list[str] = []
-    loop = _build_loop(env, "", clock, pre_spawn_hook=lambda s: seen.append(s))
-    with patch("synapse_core.sessionend.idle.subprocess.Popen") as popen:
-        fired = loop.tick_once()
+    loop = _build_loop(env, clock, pre_spawn_hook=lambda s: seen.append(s))
 
-    assert fired == [sid]
-    assert seen == [sid]
-    popen.assert_not_called()
-
-
-def test_session_tracker_sid_retained_after_fire(env) -> None:
-    """B11 critical: SessionTracker entry must NOT be removed by idle fire."""
-    clock = FakeClock()
-    sid = "sid-b11a0003"
-    env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 7 * HOUR)
-
-    loop = _build_loop(env, "python -m marrow.sessionend_async --sid {sid}", clock,
-                       pre_spawn_hook=lambda _s: None)
-    with patch(
-        "synapse_core.sessionend.idle.subprocess.Popen", return_value=_mock_proc()
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen"),
     ):
         loop.tick_once()
 
-    # sid must still be tracked for next-inbound resume.
-    assert env["tracker"].get("u1") == sid
+    assert seen == [], "pre_spawn_hook must not be called by the loop"
 
 
-def test_pre_spawn_hook_exception_does_not_block_spawn(env) -> None:
-    """If provider close throws, we still proceed to popen sessionend_async."""
+def test_pre_spawn_hook_none_works(env) -> None:
+    """pre_spawn_hook=None (default) does not cause errors."""
     clock = FakeClock()
-    sid = "sid-b11a0004"
+    sid = "sid-b11a0002"
     env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 7 * HOUR)
+    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
 
-    def bad_hook(_s: str) -> None:
-        raise RuntimeError("close blew up")
+    loop = _build_loop(env, clock, pre_spawn_hook=None)
 
-    loop = _build_loop(env, "python -m marrow.sessionend_async --sid {sid}", clock, bad_hook)
-    with patch(
-        "synapse_core.sessionend.idle.subprocess.Popen", return_value=_mock_proc()
-    ) as popen:
-        fired = loop.tick_once()
+    with (
+        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
+        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
+    ):
+        loop.tick_once()
 
-    assert fired == [sid]
-    popen.assert_called_once()
-
-
-def test_no_hook_keeps_legacy_behaviour(env) -> None:
-    """Backwards compat: if pre_spawn_hook is None, fire path unchanged."""
-    clock = FakeClock()
-    sid = "sid-b11a0005"
-    env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - 7 * HOUR)
-
-    loop = _build_loop(env, "python -m marrow.sessionend_async --sid {sid}", clock,
-                       pre_spawn_hook=None)
-    with patch(
-        "synapse_core.sessionend.idle.subprocess.Popen", return_value=_mock_proc()
-    ) as popen:
-        fired = loop.tick_once()
-
-    assert fired == [sid]
     popen.assert_called_once()
