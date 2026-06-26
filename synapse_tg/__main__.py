@@ -107,19 +107,7 @@ def main() -> int:
         if lp is not None:
             lp._close_provider()
 
-    mid_cmd = " ".join(
-        (
-            shlex.quote(sys.executable),
-            "-m",
-            "marrow.mid_scan",
-            "--sid",
-            "{sid}",
-            "--jsonl-path",
-            "{jsonl}",
-            "--channel",
-            CHANNEL,
-        )
-    )
+    mid_cmd = marrow_session.mid_scan_command(cfg.sessionend_command, CHANNEL)
     idle_loop = IdleFireLoop(
         sessions=sessions,
         command_template=cfg.sessionend_command,

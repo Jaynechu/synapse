@@ -39,6 +39,31 @@ def _format(template: str, **fields: str) -> list[str] | None:
         return None
 
 
+def mid_scan_command(sessionend_command: str, channel: str) -> str:
+    """Build mid_scan command from the configured marrow Python invocation."""
+    cmd = _format(sessionend_command, sid="{sid}")
+    if cmd is None:
+        return ""
+    try:
+        module_idx = cmd.index("marrow.sessionend_async")
+    except ValueError:
+        logger.warning("mid_scan disabled: unsupported sessionend_command")
+        return ""
+    if module_idx == 0 or cmd[module_idx - 1] != "-m":
+        logger.warning("mid_scan disabled: sessionend_command is not python -m")
+        return ""
+    mid_cmd = cmd[:module_idx] + [
+        "marrow.mid_scan",
+        "--sid",
+        "{sid}",
+        "--jsonl-path",
+        "{jsonl}",
+        "--channel",
+        channel,
+    ]
+    return " ".join(shlex.quote(part) for part in mid_cmd)
+
+
 def record_session(
     session_record_command: str,
     sid: str,

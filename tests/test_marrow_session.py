@@ -90,6 +90,39 @@ def test_record_session_swallows_oserror() -> None:
         _record(_cfg(), "sid-1", "m", "wx")
 
 
+# ── mid_scan_command ───────────────────────────────────────────────────────
+
+
+def test_mid_scan_command_uses_sessionend_python() -> None:
+    cmd = marrow_session.mid_scan_command(
+        "/Users/Gabrielle/CC-Lab/marrow/.venv/bin/python "
+        "-m marrow.sessionend_async --sid {sid}",
+        "tg",
+    )
+
+    assert cmd == (
+        "/Users/Gabrielle/CC-Lab/marrow/.venv/bin/python "
+        "-m marrow.mid_scan --sid '{sid}' --jsonl-path '{jsonl}' --channel tg"
+    )
+
+
+def test_mid_scan_command_quotes_jsonl_placeholder() -> None:
+    cmd = marrow_session.mid_scan_command(
+        "/opt/bin/python -m marrow.sessionend_async --sid {sid}",
+        "wx",
+    )
+
+    assert "--jsonl-path '{jsonl}'" in cmd
+
+
+def test_mid_scan_command_empty_when_marrow_opted_out() -> None:
+    assert marrow_session.mid_scan_command("", "wx") == ""
+
+
+def test_mid_scan_command_empty_for_unsupported_template() -> None:
+    assert marrow_session.mid_scan_command("mw sessionend --sid {sid}", "wx") == ""
+
+
 # ── get_session_model ──────────────────────────────────────────────────────
 
 
