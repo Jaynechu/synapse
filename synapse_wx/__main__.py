@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -107,6 +108,15 @@ def main() -> int:
     cfg = load_config()
     if cfg.ack_overrides:
         cmd_messages.load_overrides(cfg.ack_overrides)
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _lock_path = CONFIG_DIR / "synapse-wx.lock"
+    _lock_file = open(_lock_path, "w")  # noqa: SIM115
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("synapse-wx already running — exiting", file=sys.stderr)
+        return 0
 
     alerts = AlertSink(alerts_dir=ALERTS_DIR, marrow_repo_cmd=cfg.marrow_repo_cmd)
     media_inbound.set_inbound_alert_sink(alerts)

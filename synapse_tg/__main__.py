@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import shlex
 import subprocess
@@ -43,6 +44,15 @@ def main() -> int:
     # --- paths ---
     data_dir = cfg.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    _lock_path = data_dir / "synapse-tg.lock"
+    _lock_file = open(_lock_path, "w")  # noqa: SIM115
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("synapse-tg already running — exiting", file=sys.stderr)
+        return 0
+
     marker_dir = data_dir / "markers"
     marker_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "alerts").mkdir(parents=True, exist_ok=True)
