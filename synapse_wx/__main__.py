@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
 import shlex
 import signal
+import time
 import subprocess
 import sys
 from dataclasses import asdict
@@ -110,13 +110,22 @@ def main() -> int:
         cmd_messages.load_overrides(cfg.ack_overrides)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _lock_path = CONFIG_DIR / "synapse-wx.lock"
-    _lock_file = open(_lock_path, "w")  # noqa: SIM115
-    try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print("synapse-wx already running — exiting", file=sys.stderr)
-        return 0
+    pid_path = CONFIG_DIR / "synapse-wx.pid"
+    if pid_path.exists():
+        try:
+            old_pid = int(pid_path.read_text().strip())
+            os.kill(old_pid, signal.SIGTERM)
+            logger.info("sent SIGTERM to stale process %d", old_pid)
+            time.sleep(1)
+            try:
+                os.kill(old_pid, 0)
+                os.kill(old_pid, signal.SIGKILL)
+                logger.info("SIGKILL stale process %d", old_pid)
+            except ProcessLookupError:
+                pass
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    pid_path.write_text(str(os.getpid()))
 
     alerts = AlertSink(alerts_dir=ALERTS_DIR, marrow_repo_cmd=cfg.marrow_repo_cmd)
     media_inbound.set_inbound_alert_sink(alerts)

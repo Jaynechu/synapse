@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import fcntl
 import logging
+import os
+import signal
+import time
 import shlex
 import subprocess
 import sys
@@ -45,13 +47,22 @@ def main() -> int:
     data_dir = cfg.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    _lock_path = data_dir / "synapse-tg.lock"
-    _lock_file = open(_lock_path, "w")  # noqa: SIM115
-    try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print("synapse-tg already running — exiting", file=sys.stderr)
-        return 0
+    pid_path = data_dir / "synapse-tg.pid"
+    if pid_path.exists():
+        try:
+            old_pid = int(pid_path.read_text().strip())
+            os.kill(old_pid, signal.SIGTERM)
+            logger.info("sent SIGTERM to stale process %d", old_pid)
+            time.sleep(1)
+            try:
+                os.kill(old_pid, 0)
+                os.kill(old_pid, signal.SIGKILL)
+                logger.info("SIGKILL stale process %d", old_pid)
+            except ProcessLookupError:
+                pass
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    pid_path.write_text(str(os.getpid()))
 
     marker_dir = data_dir / "markers"
     marker_dir.mkdir(parents=True, exist_ok=True)
