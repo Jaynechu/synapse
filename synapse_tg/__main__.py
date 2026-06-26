@@ -96,11 +96,6 @@ def main() -> int:
             sid=sid, model=model, channel=CHANNEL, effort=effort,
         )
 
-    def _idle_close(sid: str) -> None:
-        lp = loop_box["loop"]
-        if lp is not None:
-            lp.idle_close_provider(sid)
-
     # --- idle fire loop ---
     def _claimed_away(sid: str) -> None:
         lp = loop_box["loop"]
@@ -110,15 +105,11 @@ def main() -> int:
     mid_cmd = marrow_session.mid_scan_command(cfg.sessionend_command, CHANNEL)
     idle_loop = IdleFireLoop(
         sessions=sessions,
-        command_template=cfg.sessionend_command,
         mid_sessionend_command=mid_cmd,
         marker_dir=marker_dir,
         audit_log=audit_log_path,
-        sessionend_err_log=sessionend_err_log,
         channel=CHANNEL,
         cc_projects_dir=Path(cc_projects_dir),
-        alerts=alerts,
-        pre_spawn_hook=_idle_close,
         claimed_away_hook=_claimed_away,
     )
 

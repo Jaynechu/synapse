@@ -35,10 +35,8 @@ class IdleFireLoop:
         self,
         *,
         sessions: SessionTracker,
-        command_template: str,
         marker_dir: Path,
         audit_log: Path,
-        sessionend_err_log: Path,
         channel: str,
         mid_sessionend_command: str = "",
         idle_threshold_sec: int = DEFAULT_IDLE_THRESHOLD_SEC,
@@ -46,26 +44,18 @@ class IdleFireLoop:
         cc_projects_dir: Path = DEFAULT_CC_PROJECTS_DIR,
         clock: Callable[[], float] = time.time,
         sleeper: Callable[[float], None] = time.sleep,
-        alerts=None,
-        spawn_probe_sec: float = 3.0,
-        pre_spawn_hook: Callable[[str], None] | None = None,
         claimed_away_hook: Callable[[str], None] | None = None,
     ) -> None:
         self._sessions = sessions
-        self._command_template = command_template or ""
         self._mid_command = mid_sessionend_command or ""
         self._idle_threshold_sec = idle_threshold_sec
         self._scan_interval_sec = scan_interval_sec
         self._cc_projects_dir = Path(cc_projects_dir)
         self._marker_dir = Path(marker_dir)
         self._audit_log = Path(audit_log)
-        self._sessionend_err_log = Path(sessionend_err_log)
         self._channel = channel
         self._clock = clock
         self._sleeper = sleeper
-        self._alerts = alerts
-        self._spawn_probe_sec = spawn_probe_sec
-        self._pre_spawn_hook = pre_spawn_hook
         self._claimed_away_hook = claimed_away_hook
 
         self._stop_evt = threading.Event()

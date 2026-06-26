@@ -175,12 +175,6 @@ def main() -> int:
     # captures `main_loop_box` and resolves at fire-time.
     main_loop_box: dict[str, MainLoop | None] = {"loop": None}
 
-    def _idle_close(sid: str) -> None:
-        ml = main_loop_box["loop"]
-        if ml is None:
-            return
-        ml.idle_close_provider(sid)
-
     def _claimed_away(sid: str) -> None:
         ml = main_loop_box["loop"]
         if ml is not None:
@@ -189,14 +183,10 @@ def main() -> int:
     mid_cmd = marrow_session.mid_scan_command(cfg.sessionend_command, CHANNEL)
     idle_loop = IdleFireLoop(
         sessions=sessions,
-        command_template=cfg.sessionend_command,
         mid_sessionend_command=mid_cmd,
         marker_dir=SESSION_MARKER_DIR,
         audit_log=SESSION_AUDIT_LOG,
-        sessionend_err_log=SESSIONEND_ERR_LOG,
         channel=CHANNEL,
-        alerts=alerts,
-        pre_spawn_hook=_idle_close,
         claimed_away_hook=_claimed_away,
     )
     buffer = InboundBuffer()

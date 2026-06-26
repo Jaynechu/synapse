@@ -63,10 +63,8 @@ def env(tmp_path: Path):
 def _build_loop(env, clock: FakeClock, mid_command: str = "") -> IdleFireLoop:
     return IdleFireLoop(
         sessions=env["tracker"],
-        command_template="",
         marker_dir=env["markers"],
         audit_log=env["audit"],
-        sessionend_err_log=env["err_log"],
         channel="wx",
         mid_sessionend_command=mid_command,
         idle_threshold_sec=6 * HOUR,
@@ -74,7 +72,6 @@ def _build_loop(env, clock: FakeClock, mid_command: str = "") -> IdleFireLoop:
         cc_projects_dir=env["projects"],
         clock=clock,
         sleeper=lambda _s: None,
-        spawn_probe_sec=0.0,
     )
 
 
@@ -101,21 +98,18 @@ def test_mid_fire_spawns_for_active_session(env) -> None:
 
     loop = IdleFireLoop(
         sessions=env["tracker"],
-        command_template="",
         mid_sessionend_command=(
             "python -m marrow.mid_scan --sid {sid} --jsonl-path {jsonl} "
             "--channel {channel}"
         ),
         marker_dir=env["markers"],
         audit_log=env["audit"],
-        sessionend_err_log=env["err_log"],
         channel="wx",
         idle_threshold_sec=6 * HOUR,
         scan_interval_sec=30 * 60,
         cc_projects_dir=env["projects"],
         clock=clock,
         sleeper=lambda _s: None,
-        spawn_probe_sec=0.0,
     )
     with (
         patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
@@ -153,18 +147,15 @@ def test_mid_fire_marker_rate_limits(env) -> None:
 
     loop = IdleFireLoop(
         sessions=env["tracker"],
-        command_template="",
         mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
         marker_dir=env["markers"],
         audit_log=env["audit"],
-        sessionend_err_log=env["err_log"],
         channel="wx",
         idle_threshold_sec=6 * HOUR,
         scan_interval_sec=30 * 60,
         cc_projects_dir=env["projects"],
         clock=clock,
         sleeper=lambda _s: None,
-        spawn_probe_sec=0.0,
     )
     with (
         patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
@@ -233,17 +224,14 @@ def test_cross_channel_cleanup_forgets_session(env) -> None:
     claimed_sids: list[str] = []
     loop = IdleFireLoop(
         sessions=env["tracker"],
-        command_template="",
         marker_dir=env["markers"],
         audit_log=env["audit"],
-        sessionend_err_log=env["err_log"],
         channel="wx",
         idle_threshold_sec=6 * HOUR,
         scan_interval_sec=30 * 60,
         cc_projects_dir=env["projects"],
         clock=clock,
         sleeper=lambda _s: None,
-        spawn_probe_sec=0.0,
         claimed_away_hook=lambda s: claimed_sids.append(s),
     )
 

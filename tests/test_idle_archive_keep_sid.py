@@ -1,4 +1,4 @@
-"""pre_spawn_hook is accepted by IdleFireLoop.__init__ for backwards compat but no longer invoked."""
+"""pre_spawn_hook is no longer a parameter of IdleFireLoop — verify it is not invoked."""
 
 from __future__ import annotations
 
@@ -53,34 +53,29 @@ def env(tmp_path: Path):
     }
 
 
-def _build_loop(env, clock: FakeClock, pre_spawn_hook=None) -> IdleFireLoop:
+def _build_loop(env, clock: FakeClock) -> IdleFireLoop:
     return IdleFireLoop(
         sessions=env["tracker"],
-        command_template="",
         mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
         marker_dir=env["markers"],
         audit_log=env["audit"],
-        sessionend_err_log=env["err_log"],
         channel="wx",
         idle_threshold_sec=6 * HOUR,
         scan_interval_sec=30 * 60,
         cc_projects_dir=env["projects"],
         clock=clock,
         sleeper=lambda _s: None,
-        spawn_probe_sec=0.0,
-        pre_spawn_hook=pre_spawn_hook,
     )
 
 
-def test_pre_spawn_hook_accepted_without_error(env) -> None:
-    """pre_spawn_hook kwarg is accepted; loop constructs and ticks without raising."""
+def test_pre_spawn_hook_removed_loop_ticks_without_error(env) -> None:
+    """Loop constructs and ticks without raising after pre_spawn_hook removal."""
     clock = FakeClock()
     sid = "sid-b11a0001"
     env["tracker"].set("u1", sid)
     _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
 
-    seen: list[str] = []
-    loop = _build_loop(env, clock, pre_spawn_hook=lambda s: seen.append(s))
+    loop = _build_loop(env, clock)
 
     with (
         patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
@@ -88,17 +83,15 @@ def test_pre_spawn_hook_accepted_without_error(env) -> None:
     ):
         loop.tick_once()
 
-    assert seen == [], "pre_spawn_hook must not be called by the loop"
 
-
-def test_pre_spawn_hook_none_works(env) -> None:
-    """pre_spawn_hook=None (default) does not cause errors."""
+def test_loop_mid_fires_without_pre_spawn_hook(env) -> None:
+    """Mid-session scan fires correctly with no pre_spawn_hook parameter."""
     clock = FakeClock()
     sid = "sid-b11a0002"
     env["tracker"].set("u1", sid)
     _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
 
-    loop = _build_loop(env, clock, pre_spawn_hook=None)
+    loop = _build_loop(env, clock)
 
     with (
         patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
