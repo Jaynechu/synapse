@@ -366,7 +366,7 @@ class TgLoop:
 
         while True:
             try:
-                ev = await loop.run_in_executor(None, lambda: q.get(timeout=60))
+                ev = await loop.run_in_executor(None, lambda: q.get(timeout=120))
             except queue.Empty:
                 logger.warning("stream: queue timeout — treating as dead")
                 raise ProviderDeadError("recv queue timeout")

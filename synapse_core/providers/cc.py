@@ -175,7 +175,7 @@ class ClaudeCodeProvider(Provider):
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                cwd=self.cwd,
+                cwd="/tmp",
                 env=merged,
                 start_new_session=True,
             )
