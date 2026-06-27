@@ -186,6 +186,10 @@ class ClaudeCodeProvider(Provider):
             # without it, the final assistant `thinking` block is empty under
             # OAuth (redacted to signature only).
             "--include-partial-messages",
+            # CC hangs during settings/hooks/plugin init under launchd.
+            # Skip auto-discovered settings; bridge injects context via
+            # --append-system-prompt instead.
+            "--setting-sources", "",
         ]
         if self.model:
             cmd += ["--model", self.model]
