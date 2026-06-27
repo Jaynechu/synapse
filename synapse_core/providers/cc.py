@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -47,6 +48,51 @@ _USAGE_KEYS = (
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
 )
+
+
+def _account_env() -> tuple[str | None, str | None, str | None]:
+    try:
+        import pwd
+
+        entry = pwd.getpwuid(os.getuid())
+    except (ImportError, KeyError, OSError):
+        return (None, None, None)
+    return (entry.pw_name, entry.pw_shell, entry.pw_dir)
+
+
+def _darwin_user_temp_dir() -> str | None:
+    if sys.platform != "darwin":
+        return None
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/getconf", "DARWIN_USER_TEMP_DIR"],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    path = proc.stdout.strip()
+    if proc.returncode != 0 or not path or not os.path.isdir(path):
+        return None
+    return path
+
+
+def _normalize_launchd_env(env: dict[str, str]) -> None:
+    user, shell, home = _account_env()
+    if home:
+        env.setdefault("HOME", home)
+    if user:
+        env.setdefault("USER", user)
+        env.setdefault("LOGNAME", user)
+    if shell:
+        env.setdefault("SHELL", shell)
+    env.setdefault("TERM", "xterm-256color")
+    if "TMPDIR" not in env:
+        tmpdir = _darwin_user_temp_dir()
+        if tmpdir:
+            env["TMPDIR"] = tmpdir
 
 # E-polish outbound quote v3: teach cc the bridge-specific <quote> protocol.
 # Injected once per session via --append-system-prompt so cc emits the tag
@@ -162,6 +208,7 @@ class ClaudeCodeProvider(Provider):
         if env:
             merged.update(env)
         merged.update(self.extra_env)
+        _normalize_launchd_env(merged)
         if self.marrow_bridge:
             merged["MARROW_BRIDGE"] = "1"
         # Channel marker — the channel_marker hook reads this and prepends

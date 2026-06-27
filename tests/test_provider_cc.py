@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -114,6 +115,49 @@ def test_spawn_extra_env_overrides_env_arg():
         p.spawn(env={"K": "from_arg"})
         env = Popen.call_args.kwargs["env"]
         assert env["K"] == "from_extra"
+
+
+def test_spawn_fills_launchd_missing_env():
+    with (
+        patch.dict(os.environ, {"HOME": "/Users/Gabrielle", "PATH": "/bin"}, clear=True),
+        patch("synapse_core.providers.cc._account_env") as account_env,
+        patch("synapse_core.providers.cc._darwin_user_temp_dir") as temp_dir,
+        patch("synapse_core.providers.cc.subprocess.Popen") as Popen,
+    ):
+        account_env.return_value = ("Gabrielle", "/bin/zsh", "/Users/Gabrielle")
+        temp_dir.return_value = "/var/folders/test/T/"
+        Popen.return_value = _make_fake_popen([])
+
+        p = _provider()
+        p.spawn()
+
+        env = Popen.call_args.kwargs["env"]
+        assert env["USER"] == "Gabrielle"
+        assert env["LOGNAME"] == "Gabrielle"
+        assert env["SHELL"] == "/bin/zsh"
+        assert env["TERM"] == "xterm-256color"
+        assert env["TMPDIR"] == "/var/folders/test/T/"
+
+
+def test_spawn_keeps_explicit_launchd_env_values():
+    with (
+        patch.dict(os.environ, {"HOME": "/Users/Gabrielle", "PATH": "/bin"}, clear=True),
+        patch("synapse_core.providers.cc._account_env") as account_env,
+        patch("synapse_core.providers.cc._darwin_user_temp_dir") as temp_dir,
+        patch("synapse_core.providers.cc.subprocess.Popen") as Popen,
+    ):
+        account_env.return_value = ("Gabrielle", "/bin/zsh", "/Users/Gabrielle")
+        temp_dir.return_value = "/var/folders/test/T/"
+        Popen.return_value = _make_fake_popen([])
+
+        p = _provider(extra_env={"TMPDIR": "/custom/tmp", "TERM": "dumb"})
+        p.spawn(env={"USER": "bridge-user", "LOGNAME": "bridge-logname"})
+
+        env = Popen.call_args.kwargs["env"]
+        assert env["USER"] == "bridge-user"
+        assert env["LOGNAME"] == "bridge-logname"
+        assert env["TERM"] == "dumb"
+        assert env["TMPDIR"] == "/custom/tmp"
 
 
 def test_send_writes_user_frame_line_delimited():
