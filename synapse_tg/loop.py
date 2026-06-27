@@ -256,6 +256,7 @@ class TgLoop:
 
     def ensure_provider(self) -> None:
         if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+            self._provider = None
             return
         if self._provider is None or not self._provider.is_alive():
             self._provider = self._make_provider()
@@ -467,6 +468,12 @@ class TgLoop:
         for k, v in usage.items():
             if isinstance(v, int):
                 self._state.usage_total[k] = self._state.usage_total.get(k, 0) + v
+
+    async def _send_provider_notice(self, bot: Bot, chat_id: int, key: str) -> None:
+        try:
+            await bot.send_message(chat_id=chat_id, text=messages.t(key, self._state.voice_style))
+        except Exception as e:
+            logger.warning("provider notice send failed (%s): %s", key, e)
 
     def idle_close_provider(self, sid: str) -> None:
         """Called by IdleFireLoop pre_spawn_hook. Graceful close if sids match."""
@@ -713,8 +720,13 @@ class TgLoop:
                     return
                 logger.error("provider error: %s", e)
                 self._respawn()
+                if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+                    logger.error("provider gave up after %d consecutive deaths", self._death_count)
+                    self._provider = None
+                    await self._send_provider_notice(bot, chat_id, "provider.gave_up")
+                    return
                 self._buffer.prepend(body)
-                await bot.send_message(chat_id=chat_id, text=messages.t("provider.restarting", self._state.voice_style))
+                await self._send_provider_notice(bot, chat_id, "provider.restarting")
                 return
             except Exception as e:
                 logger.error("unexpected error: %s", e)

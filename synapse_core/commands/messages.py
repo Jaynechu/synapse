@@ -289,6 +289,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "重启中，再说一次",
         "en": "[bridge: provider restarting, try again]",
     },
+    "provider.gave_up": {
+        "cn": "provider连续暴毙，先停手",
+        "en": "[bridge: provider gave up]",
+    },
     "bridge.error": {
         "cn": "桥炸了，再试一次",
         "en": "[bridge: error, try again]",
