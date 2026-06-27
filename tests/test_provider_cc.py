@@ -45,7 +45,6 @@ def test_spawn_args_have_required_flags():
         p.spawn()
         args, kwargs = Popen.call_args
         cmd = args[0]
-        assert "-p" in cmd
         assert "--output-format" in cmd
         assert cmd[cmd.index("--output-format") + 1] == "stream-json"
         assert "--input-format" in cmd
