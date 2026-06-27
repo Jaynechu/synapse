@@ -130,15 +130,14 @@ class ClaudeCodeProvider(Provider):
     def _build_cmd(self) -> list[str]:
         cmd = [
             self.binary,
+            "-p",
             "--output-format", "stream-json",
             "--input-format", "stream-json",
             "--verbose",
             "--permission-mode", "bypassPermissions",
-            # cc help mis-states this as "--print only" — in practice it works
-            # with persistent stream-json subprocess too (claude-agent-sdk does
-            # the same). Required to surface plaintext `thinking_delta` events;
-            # without it, the final assistant `thinking` block is empty under
-            # OAuth (redacted to signature only).
+            # Required to surface plaintext `thinking_delta` events; without
+            # it, the final assistant `thinking` block is empty under OAuth
+            # (redacted to signature only).
             "--include-partial-messages",
         ]
         if self.model:
