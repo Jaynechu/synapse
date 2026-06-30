@@ -12,7 +12,7 @@ MODEL_ALIASES: dict[str, str] = {
     "4.8": "claude-opus-4-8[1m]",
     "5": "claude-fable-5",
     "opus": "claude-opus-4-8[1m]",
-    "sonnet": "claude-sonnet-4-6",
+    "sonnet": "claude-sonnet-5",
     "haiku": "claude-haiku-4-5-20251001",
     "fable": "claude-fable-5",
 }
@@ -25,7 +25,7 @@ MODEL_NAMES: dict[str, str] = {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-7": "Opus 4.7",
     "claude-opus-4-8": "Opus 4.8",
-    "claude-sonnet-4-6": "Sonnet 4.6",
+    "claude-sonnet-5": "Sonnet 5",
     "claude-haiku-4-5-20251001": "Haiku 4.5",
     "claude-fable-5": "Fable 5",
 }
