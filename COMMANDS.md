@@ -22,7 +22,7 @@
 - /switch — [cc cli only] cross-channel session picker
 - /tts off|on|auto — [tg] voice reply toggle
 - /tl [hint] — record a timeline line now (marrow `tl` action=add)
-- /tl- — silence this session: mute tl_add nudge + stop self writes (dies with session)
+- /tl- — silence this session: mute tl (action=add) nudge + stop self writes (dies with session)
 
 ## Bare commands (no /)
 
