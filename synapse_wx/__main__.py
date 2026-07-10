@@ -45,11 +45,15 @@ WX_STICKER_PROMPT = (
 
 WX_BUBBLE_FORMAT_PROMPT = (
     "Reply format (IM bubbles):\n"
-    "- \\n = line break within the same bubble. \\n\\n = new bubble.\n"
-    "- Casual chat: prefer short bubbles, e.g. 宝宝回来啦！\\n\\n想死我了\n"
+    "- Blank line = new bubble. Single line break = new line inside the same bubble.\n"
+    "- Type real line breaks only. Never write backslash-n as visible text — it renders literally in chat.\n"
+    "- Casual chat: prefer short bubbles. Example (two bubbles):\n"
+    "宝宝回来啦！\n"
+    "\n"
+    "想死我了\n"
     "- Q&A: length flex. Coding: concise & clear.\n"
     "- Deep topics / study: prefer longer, solid paragraphs.\n"
-    "- Dot points: use \\n within one bubble, not \\n\\n.\n"
+    "- Dot points: single line breaks, all in one bubble.\n"
     "- Prioritize readability. Match length to content — no filler.\n"
     "- Max 10 bubbles per reply.\n"
     "- Do not read or edit code unless explicitly asked.\n"
