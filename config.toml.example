@@ -13,6 +13,16 @@ target_wxid = ""
 
 [loop]
 poll_interval_sec = 1.0
+# Spacing between outbound reply bubbles (seconds).
+bubble_gap_sec = 0.8
+# Outbound-edge bubble cap (wx): adjacent text bubbles are merged until a
+# turn fits within this many. Main defense vs the iLink send count quota.
+bubble_cap = 10
+
+[send]
+# On a business rejection (ret!=0 → iLink send count quota exhausted), wait
+# this long (seconds) for the quota window to roll over, then retry once.
+quota_wait_sec = 65.0
 
 # ── Shared ────────────────────────────────────────────
 [provider]

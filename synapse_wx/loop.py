@@ -25,7 +25,11 @@ from synapse_core.providers.base import Provider
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
-from .split import format_thinking_bubbles, split_for_wechat_typed
+from .split import (
+    format_thinking_bubbles,
+    merge_bubbles_to_cap,
+    split_for_wechat_typed,
+)
 from synapse_core.state import BridgeState
 from .typing_ping import TypingPing
 
@@ -34,6 +38,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_ALERT_DIR = Path.home() / ".config" / "synapse-wx" / "alerts"
 DEFAULT_MEDIA_DIR = Path.home() / ".config" / "synapse-wx" / "media"
 _DEFAULT_BUBBLE_GAP_SEC = 0.8
+_DEFAULT_BUBBLE_CAP = 10
 # Quote-lite (post-v4): cc emits a <quote>FRAGMENT</quote> block ANYWHERE in
 # the reply. The real ref_msg outbound path was attempted live but WeChat does
 # NOT render the bubble as a quote-reply (see MAP.md "Known limitations").
@@ -44,12 +49,6 @@ _QUOTE_TAG = re.compile(
     r"<quote>(.*?)</quote>\n?", re.DOTALL | re.IGNORECASE
 )
 _FAKE_QUOTE_PREFIX = "▎"
-# Pre-send merge: prepended to the re-queued old body so cc knows its prior
-# answer never reached the user and it should answer the merged thread fresh.
-_MERGE_NOTE = (
-    "[bridge: your previous reply was dropped — new messages arrived "
-    "mid-turn. Answer the full merged message below.]"
-)
 # Truncate display fragment: 40 CN chars or 80 ASCII chars.
 _FAKE_QUOTE_CN_MAX = 40
 _FAKE_QUOTE_ASCII_MAX = 80
@@ -135,6 +134,11 @@ class MainLoop:
         # Config-first bubble pacing; falls back to default when cfg absent.
         self._bubble_gap_sec = (
             cfg.bubble_gap_sec if cfg is not None else _DEFAULT_BUBBLE_GAP_SEC
+        )
+        # Outbound-edge bubble cap (main defense vs iLink count quota): merge
+        # adjacent text bubbles until the turn fits within this many.
+        self._bubble_cap = (
+            cfg.bubble_cap if cfg is not None else _DEFAULT_BUBBLE_CAP
         )
         # B1: best-effort sessions row writer. Default no-op so tests + mock
         # provider paths don't pay the marrow-CLI penalty.
@@ -545,25 +549,10 @@ class MainLoop:
         if not reply_text or not from_wxid:
             self._stop_typing()
             return
-        # Pre-send merge: new inbound arrived while cc was producing this
-        # reply → the reply answers a stale snapshot. Drop it, re-insert the
-        # old body at the FRONT of the buffer (media already materialized —
-        # its Read instruction rides along as text), and let the next flush
-        # run one merged turn. No mid-stream abort needed (dodges cc #41665).
-        # TypingPing is deliberately kept alive across the re-run.
-        with self._state_lock:
-            if self._buffer:
-                replay = body
-                if media_paths:
-                    instruction = build_read_tool_instruction(media_paths)
-                    replay = f"{replay}\n\n{instruction}" if replay else instruction
-                merged = f"{_MERGE_NOTE}\n{replay}" if replay else ""
-                self._buffer.prepend(merged)
-                self._last_thinking = ""
-                logger.info(
-                    "pre-send merge: reply dropped, %d chars re-queued", len(replay)
-                )
-                return
+        # Messages that arrived mid-turn stay in the InboundBuffer untouched
+        # (they were never drained) and become the next turn: this reply ships
+        # now, then the newer batch is thought about and answered on the next
+        # flush. No pre-send merge / reply-drop.
         # Quote-lite: extract <quote>FRAGMENT</quote> from the WHOLE reply
         # BEFORE splitting on newlines. Pre-split extraction guarantees a
         # multi-line tag never leaks across bubbles as literal text. The
@@ -586,6 +575,11 @@ class MainLoop:
                 bubbles = [{"kind": "text", "text": s} for s in tbs] + bubbles
         # Reset per-turn so a stale thinking buffer never leaks into the next.
         self._last_thinking = ""
+        # Hard bubble cap at the outbound edge (main quota defense): merge
+        # adjacent text bubbles until the turn fits within _bubble_cap. Media
+        # bubbles never merge and keep their order.
+        if len(bubbles) > self._bubble_cap:
+            bubbles = merge_bubbles_to_cap(bubbles, self._bubble_cap)
         total = len(bubbles)
         for i, bubble in enumerate(bubbles):
             try:

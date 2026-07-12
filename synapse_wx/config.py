@@ -23,9 +23,14 @@ class Config:
     # Spacing between outbound reply bubbles. Wider gap avoids tripping the
     # iLink rate limit (ret=-2) on multi-bubble turns.
     bubble_gap_sec: float = 0.8
-    # Chunk-local retry for send_text business rejections (ret!=0).
-    send_retry_attempts: int = 3
-    send_retry_base_sec: float = 1.0
+    # Outbound edge bubble cap: adjacent text bubbles are merged before the
+    # send loop until the turn fits within this many bubbles. Main defense
+    # against the iLink ~10-per-minute count quota (ret=-2).
+    bubble_cap: int = 10
+    # On a business rejection (ret!=0), wait this long for the quota window to
+    # roll over, then retry the chunk once. Replaces the old exponential
+    # backoff (useless against a minute-scale count quota).
+    quota_wait_sec: float = 65.0
     target_wxid: str = ""
     marrow_repo_cmd: str = ""
     cc_cwd: str = ""  # cwd cc subprocess spawns in; empty = $HOME
@@ -87,16 +92,16 @@ def load_config(path: Path | None = None) -> Config:
         val = loop["bubble_gap_sec"]
         if isinstance(val, (int, float)) and val >= 0:
             cfg.bubble_gap_sec = float(val)
+    if isinstance(loop, dict) and "bubble_cap" in loop:
+        val = loop["bubble_cap"]
+        if isinstance(val, int) and val >= 1:
+            cfg.bubble_cap = val
     send = data.get("send") or {}
     if isinstance(send, dict):
-        if "send_retry_attempts" in send:
-            val = send["send_retry_attempts"]
-            if isinstance(val, int) and val >= 1:
-                cfg.send_retry_attempts = val
-        if "send_retry_base_sec" in send:
-            val = send["send_retry_base_sec"]
+        if "quota_wait_sec" in send:
+            val = send["quota_wait_sec"]
             if isinstance(val, (int, float)) and val >= 0:
-                cfg.send_retry_base_sec = float(val)
+                cfg.quota_wait_sec = float(val)
     user = data.get("user") or {}
     if isinstance(user, dict) and "target_wxid" in user:
         val = user["target_wxid"]

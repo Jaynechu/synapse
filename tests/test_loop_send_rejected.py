@@ -16,7 +16,11 @@ from synapse_core.providers.base import Provider
 from synapse_core.sessionend.tracker import SessionTracker
 from synapse_core.state import BridgeState
 from synapse_wx.config import Config
-from synapse_wx.loop import _DEFAULT_BUBBLE_GAP_SEC, MainLoop
+from synapse_wx.loop import (
+    _DEFAULT_BUBBLE_CAP,
+    _DEFAULT_BUBBLE_GAP_SEC,
+    MainLoop,
+)
 
 
 class FakeClock:
@@ -188,3 +192,37 @@ def test_bubble_gap_default_when_no_cfg(env) -> None:
     provider = MultiBubbleProvider("a")
     loop, _ = _make_loop(env, ilink, provider, cfg=None)
     assert loop._bubble_gap_sec == _DEFAULT_BUBBLE_GAP_SEC
+
+
+def test_bubble_cap_comes_from_config(env) -> None:
+    cfg = Config()
+    cfg.bubble_cap = 4
+    ilink = RejectingILink(fail_from=99)
+    provider = MultiBubbleProvider("a")
+    loop, _ = _make_loop(env, ilink, provider, cfg=cfg)
+    assert loop._bubble_cap == 4
+
+
+def test_bubble_cap_default_when_no_cfg(env) -> None:
+    ilink = RejectingILink(fail_from=99)
+    provider = MultiBubbleProvider("a")
+    loop, _ = _make_loop(env, ilink, provider, cfg=None)
+    assert loop._bubble_cap == _DEFAULT_BUBBLE_CAP
+
+
+def test_over_cap_turn_merges_before_send(env) -> None:
+    """A reply that splits into more than bubble_cap bubbles is merged down to
+    the cap at the outbound edge, so send_text is called <= cap times."""
+    cfg = Config()
+    cfg.bubble_cap = 3
+    ilink = RejectingILink(fail_from=99)  # never fails
+    # 6 paragraphs → 6 text bubbles pre-cap; expect merge to <= 3 sends.
+    reply = "\n\n".join(f"para {i}" for i in range(6))
+    provider = MultiBubbleProvider(reply)
+    loop, _ = _make_loop(env, ilink, provider, cfg=cfg)
+    loop.maybe_flush()
+    assert len(ilink.sent) <= 3
+    # No content lost: every original paragraph survives in the joined output.
+    joined = "\n".join(s[2] for s in ilink.sent)
+    for i in range(6):
+        assert f"para {i}" in joined

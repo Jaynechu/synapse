@@ -166,47 +166,52 @@ def test_send_text_payload_shape(logged_in_client: ILinkClient) -> None:
 
 
 def test_send_text_returns_false_on_error_ret(logged_in_client: ILinkClient) -> None:
+    logged_in_client._sleeper = lambda _s: None
     logged_in_client._client.post.return_value = _make_response(
         200, {"ret": -1, "errmsg": "nope"}
     )
     assert logged_in_client.send_text("u", "c", "hi") is False
 
 
-def test_send_text_retries_rejected_chunk_then_succeeds(
-    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+def test_send_text_quota_reject_then_wait_then_success(
+    logged_in_client: ILinkClient,
 ) -> None:
-    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
-    logged_in_client._send_retry_base_sec = 0.0
-    # First POST rejected (ret=-2 rate limit), second POST accepted.
+    # Fake sleeper: never wait real seconds; record total slept.
+    slept: list[float] = []
+    logged_in_client._sleeper = lambda s: slept.append(s)
+    logged_in_client._quota_wait_sec = 65.0
+    # First POST rejected (ret=-2 quota), retry after wait accepted.
     logged_in_client._client.post.side_effect = [
-        _make_response(200, {"ret": -2, "errmsg": "rate limited"}),
+        _make_response(200, {"ret": -2, "errmsg": "quota"}),
         _make_response(200, {"ret": 0}),
     ]
     assert logged_in_client.send_text("u", "c", "hi") is True
     assert logged_in_client._client.post.call_count == 2
+    # Slept the full quota window (~65s) in 1s slices.
+    assert sum(slept) == pytest.approx(65.0)
 
 
-def test_send_text_gives_up_after_n_attempts(
-    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+def test_send_text_quota_reject_twice_returns_false(
+    logged_in_client: ILinkClient,
 ) -> None:
-    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
-    logged_in_client._send_retry_attempts = 3
-    logged_in_client._send_retry_base_sec = 0.0
+    logged_in_client._sleeper = lambda _s: None
+    logged_in_client._quota_wait_sec = 65.0
+    # Rejected before AND after the quota wait → give up (no more retries).
     logged_in_client._client.post.return_value = _make_response(
-        200, {"ret": -2, "errmsg": "rate limited"}
+        200, {"ret": -2, "errmsg": "quota"}
     )
     assert logged_in_client.send_text("u", "c", "hi") is False
-    # 3 attempts on the single chunk, then abandon.
-    assert logged_in_client._client.post.call_count == 3
+    # Original attempt + one post-wait retry = 2 POSTs total.
+    assert logged_in_client._client.post.call_count == 2
 
 
 def test_send_text_abandons_remaining_chunks_on_failure(
-    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+    logged_in_client: ILinkClient,
 ) -> None:
-    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
-    logged_in_client._send_retry_attempts = 2
-    logged_in_client._send_retry_base_sec = 0.0
-    # chunk 1 ok, chunk 2 rejected on both attempts → 3 POSTs total, no chunk 3.
+    logged_in_client._sleeper = lambda _s: None
+    logged_in_client._quota_wait_sec = 65.0
+    # chunk 1 ok; chunk 2 rejected on both the attempt and the post-wait retry
+    # → 3 POSTs total, chunk 3 never attempted.
     logged_in_client._client.post.side_effect = [
         _make_response(200, {"ret": 0}),
         _make_response(200, {"ret": -2}),

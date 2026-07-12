@@ -140,8 +140,7 @@ def main() -> int:
     )
     ilink = ILinkClient(
         raw_poll_logger=raw_poll_logger,
-        send_retry_attempts=cfg.send_retry_attempts,
-        send_retry_base_sec=cfg.send_retry_base_sec,
+        quota_wait_sec=cfg.quota_wait_sec,
     )
     if raw_poll_logger is not None and raw_poll_logger.active():
         logger.info(

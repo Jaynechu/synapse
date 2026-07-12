@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import time
 import uuid
 from pathlib import Path
@@ -49,8 +48,7 @@ class ILinkClient:
         cursor: Cursor | None = None,
         raw_poll_logger: Any = None,
         *,
-        send_retry_attempts: int = 3,
-        send_retry_base_sec: float = 1.0,
+        quota_wait_sec: float = 65.0,
     ) -> None:
         self.bot_token: str | None = None
         self.base_url: str = ILINK_BASE_URL
@@ -58,9 +56,10 @@ class ILinkClient:
         self._cursor_store = cursor or Cursor()
         self._cursor: str = self._cursor_store.get()
         self._typing_ticket: str = ""
-        # Chunk-local retry for business rejections (ret!=0) in send_text.
-        self._send_retry_attempts = max(1, send_retry_attempts)
-        self._send_retry_base_sec = send_retry_base_sec
+        # On a business rejection (ret!=0) the iLink send quota (~10 msgs /
+        # ~60s window) is exhausted; wait this long for it to roll over, then
+        # retry the chunk once.
+        self._quota_wait_sec = max(0.0, quota_wait_sec)
         # PLAN 2c: optional RawPollLogger dumping raw getupdates payloads
         # (pre-filter, pre-ret-check) for the inbound typing-event hunt.
         self._raw_poll_logger = raw_poll_logger
@@ -162,62 +161,83 @@ class ILinkClient:
         return True
 
     def _send_chunk(self, to_user_id: str, context_token: str, chunk: str) -> bool:
-        """POST one text chunk, retrying business rejections (ret!=0 / non-200).
+        """POST one text chunk; on business rejection, wait out the send quota.
 
-        Chunk-local so a mid-turn retry never re-sends earlier chunks. Transport
-        exceptions bubble up to the ``@with_retry`` decorator on send_text.
+        The iLink send quota is a COUNT quota (~10 msgs per ~60s window), not a
+        pacing limit — exponential backoff cannot beat it. On a rejection
+        (non-200 or ret!=0) we sleep ``quota_wait_sec`` for the window to roll
+        over, then retry the chunk exactly once. Chunk-local so a retry never
+        re-sends earlier chunks. Transport exceptions bubble up to the
+        ``@with_retry`` decorator on send_text.
         """
-        attempts = self._send_retry_attempts
-        base = self._send_retry_base_sec
-        for attempt in range(attempts):
-            client_id = f"synapse-wx:{uuid.uuid4().hex[:16]}"
-            item: dict = {"type": 1, "text_item": {"text": chunk}}
-            msg: dict = {
-                "from_user_id": "",
-                "to_user_id": to_user_id,
-                "client_id": client_id,
-                "message_type": 2,
-                "message_state": 2,
-                "context_token": context_token,
-                "item_list": [item],
-            }
-            payload = {
-                "msg": msg,
-                "base_info": {"channel_version": CHANNEL_VERSION},
-            }
-            resp = self._client.post(
-                f"{self.base_url}/ilink/bot/sendmessage",
-                headers=self._headers(),
-                json=payload,
-            )
-            try:
-                resp_data = resp.json()
-            except (json.JSONDecodeError, ValueError):
-                logger.error(
-                    "Non-JSON response from sendmessage: status=%d", resp.status_code
-                )
-                return False
-            ret = resp_data.get("ret")
-            if resp.status_code == 200 and (ret is None or ret == 0):
-                return True
-            if attempt == attempts - 1:
-                logger.error(
-                    "Failed to send message: ret=%s, errmsg=%s",
-                    resp_data.get("ret"),
-                    resp_data.get("errmsg", resp.text[:200]),
-                )
-                return False
-            delay = base * (2**attempt) + random.uniform(0, 0.5)
-            logger.warning(
-                "send chunk rejected (attempt %d/%d): ret=%s errmsg=%s — retry in %.2fs",
-                attempt + 1,
-                attempts,
-                ret,
-                resp_data.get("errmsg", resp.text[:200]),
-                delay,
-            )
-            time.sleep(delay)
+        ok, ret, errmsg = self._post_chunk(to_user_id, context_token, chunk)
+        if ok:
+            return True
+        if self._quota_wait_sec <= 0:
+            logger.error("Failed to send message: ret=%s, errmsg=%s", ret, errmsg)
+            return False
+        logger.warning(
+            "send chunk rejected (ret=%s errmsg=%s) — waiting %.1fs for quota "
+            "window to roll, then one retry",
+            ret,
+            errmsg,
+            self._quota_wait_sec,
+        )
+        self._sleep_quota_window()
+        ok, ret, errmsg = self._post_chunk(to_user_id, context_token, chunk)
+        if ok:
+            return True
+        logger.error(
+            "Failed to send message after quota wait: ret=%s, errmsg=%s", ret, errmsg
+        )
         return False
+
+    def _sleep_quota_window(self) -> None:
+        """Sleep ``quota_wait_sec`` in ~1s slices so stop signals stay responsive."""
+        remaining = self._quota_wait_sec
+        while remaining > 0:
+            slice_sec = 1.0 if remaining > 1.0 else remaining
+            self._sleeper(slice_sec)
+            remaining -= slice_sec
+
+    # Overridable sleeper so tests never wait real seconds.
+    _sleeper = staticmethod(time.sleep)
+
+    def _post_chunk(
+        self, to_user_id: str, context_token: str, chunk: str
+    ) -> tuple[bool, Any, str]:
+        """POST one chunk once. Returns (ok, ret, errmsg)."""
+        client_id = f"synapse-wx:{uuid.uuid4().hex[:16]}"
+        item: dict = {"type": 1, "text_item": {"text": chunk}}
+        msg: dict = {
+            "from_user_id": "",
+            "to_user_id": to_user_id,
+            "client_id": client_id,
+            "message_type": 2,
+            "message_state": 2,
+            "context_token": context_token,
+            "item_list": [item],
+        }
+        payload = {
+            "msg": msg,
+            "base_info": {"channel_version": CHANNEL_VERSION},
+        }
+        resp = self._client.post(
+            f"{self.base_url}/ilink/bot/sendmessage",
+            headers=self._headers(),
+            json=payload,
+        )
+        try:
+            resp_data = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            logger.error(
+                "Non-JSON response from sendmessage: status=%d", resp.status_code
+            )
+            return False, None, "non-JSON response"
+        ret = resp_data.get("ret")
+        if resp.status_code == 200 and (ret is None or ret == 0):
+            return True, ret, ""
+        return False, ret, str(resp_data.get("errmsg", resp.text[:200]))
 
     def send_typing(self, to_user_id: str, context_token: str) -> None:
         """Best-effort typing indicator. Swallows all errors.
