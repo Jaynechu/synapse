@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_ALERT_DIR = Path.home() / ".config" / "synapse-wx" / "alerts"
 DEFAULT_MEDIA_DIR = Path.home() / ".config" / "synapse-wx" / "media"
-_BUBBLE_GAP_SEC = 0.2
+_DEFAULT_BUBBLE_GAP_SEC = 0.8
 # Quote-lite (post-v4): cc emits a <quote>FRAGMENT</quote> block ANYWHERE in
 # the reply. The real ref_msg outbound path was attempted live but WeChat does
 # NOT render the bubble as a quote-reply (see MAP.md "Known limitations").
@@ -132,6 +132,10 @@ class MainLoop:
         self._registry = registry
         self._alerts = alerts
         self._cfg = cfg
+        # Config-first bubble pacing; falls back to default when cfg absent.
+        self._bubble_gap_sec = (
+            cfg.bubble_gap_sec if cfg is not None else _DEFAULT_BUBBLE_GAP_SEC
+        )
         # B1: best-effort sessions row writer. Default no-op so tests + mock
         # provider paths don't pay the marrow-CLI penalty.
         self._record_session = record_session or (lambda _sid, _model: None)
@@ -582,10 +586,34 @@ class MainLoop:
                 bubbles = [{"kind": "text", "text": s} for s in tbs] + bubbles
         # Reset per-turn so a stale thinking buffer never leaks into the next.
         self._last_thinking = ""
+        total = len(bubbles)
         for i, bubble in enumerate(bubbles):
             try:
                 if bubble.get("kind") == "text":
-                    self._ilink.send_text(from_wxid, ctx_token, bubble["text"])
+                    sent = self._ilink.send_text(from_wxid, ctx_token, bubble["text"])
+                    if not sent:
+                        lost = total - i
+                        logger.warning(
+                            "send_text rejected bubble %d/%d — %d bubble(s) lost",
+                            i + 1,
+                            total,
+                            lost,
+                        )
+                        if self._alerts is not None:
+                            try:
+                                self._alerts.write(
+                                    "error",
+                                    "wx_send_rejected",
+                                    f"send_text rejected at bubble {i + 1}/{total}; "
+                                    f"{lost} bubble(s) of the turn lost",
+                                    source="loop.maybe_flush",
+                                    fingerprint="wx.send_rejected",
+                                )
+                            except Exception as ae:
+                                logger.warning("alerts.write failed: %s", ae)
+                        if i == 0:
+                            self._stop_typing()
+                        break
                 else:
                     ok = dispatch_media_bubble(
                         self._ilink,
@@ -601,8 +629,8 @@ class MainLoop:
                         )
                         if i == 0:
                             self._stop_typing()
-                        if i < len(bubbles) - 1:
-                            self._sleeper(_BUBBLE_GAP_SEC)
+                        if i < total - 1:
+                            self._sleeper(self._bubble_gap_sec)
                         continue
             except Exception as e:
                 self._stop_typing()
@@ -610,8 +638,8 @@ class MainLoop:
                 break
             if i == 0:
                 self._stop_typing()
-            if i < len(bubbles) - 1:
-                self._sleeper(_BUBBLE_GAP_SEC)
+            if i < total - 1:
+                self._sleeper(self._bubble_gap_sec)
 
     def _extract_quote_from_reply(
         self, reply_text: str

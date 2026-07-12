@@ -172,6 +172,51 @@ def test_send_text_returns_false_on_error_ret(logged_in_client: ILinkClient) -> 
     assert logged_in_client.send_text("u", "c", "hi") is False
 
 
+def test_send_text_retries_rejected_chunk_then_succeeds(
+    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
+    logged_in_client._send_retry_base_sec = 0.0
+    # First POST rejected (ret=-2 rate limit), second POST accepted.
+    logged_in_client._client.post.side_effect = [
+        _make_response(200, {"ret": -2, "errmsg": "rate limited"}),
+        _make_response(200, {"ret": 0}),
+    ]
+    assert logged_in_client.send_text("u", "c", "hi") is True
+    assert logged_in_client._client.post.call_count == 2
+
+
+def test_send_text_gives_up_after_n_attempts(
+    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
+    logged_in_client._send_retry_attempts = 3
+    logged_in_client._send_retry_base_sec = 0.0
+    logged_in_client._client.post.return_value = _make_response(
+        200, {"ret": -2, "errmsg": "rate limited"}
+    )
+    assert logged_in_client.send_text("u", "c", "hi") is False
+    # 3 attempts on the single chunk, then abandon.
+    assert logged_in_client._client.post.call_count == 3
+
+
+def test_send_text_abandons_remaining_chunks_on_failure(
+    logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(client_module.time, "sleep", lambda _s: None)
+    logged_in_client._send_retry_attempts = 2
+    logged_in_client._send_retry_base_sec = 0.0
+    # chunk 1 ok, chunk 2 rejected on both attempts → 3 POSTs total, no chunk 3.
+    logged_in_client._client.post.side_effect = [
+        _make_response(200, {"ret": 0}),
+        _make_response(200, {"ret": -2}),
+        _make_response(200, {"ret": -2}),
+    ]
+    long_text = ("a" * 3000) + "\n" + ("b" * 3000) + "\n" + ("c" * 3000)
+    assert logged_in_client.send_text("u", "c", long_text) is False
+    assert logged_in_client._client.post.call_count == 3
+
+
 def test_send_text_splits_long_text(
     logged_in_client: ILinkClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

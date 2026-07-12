@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 import uuid
 from pathlib import Path
@@ -44,7 +45,12 @@ class ILinkClient:
     """Minimal, secure iLink Bot API client."""
 
     def __init__(
-        self, cursor: Cursor | None = None, raw_poll_logger: Any = None
+        self,
+        cursor: Cursor | None = None,
+        raw_poll_logger: Any = None,
+        *,
+        send_retry_attempts: int = 3,
+        send_retry_base_sec: float = 1.0,
     ) -> None:
         self.bot_token: str | None = None
         self.base_url: str = ILINK_BASE_URL
@@ -52,6 +58,9 @@ class ILinkClient:
         self._cursor_store = cursor or Cursor()
         self._cursor: str = self._cursor_store.get()
         self._typing_ticket: str = ""
+        # Chunk-local retry for business rejections (ret!=0) in send_text.
+        self._send_retry_attempts = max(1, send_retry_attempts)
+        self._send_retry_base_sec = send_retry_base_sec
         # PLAN 2c: optional RawPollLogger dumping raw getupdates payloads
         # (pre-filter, pre-ret-check) for the inbound typing-event hunt.
         self._raw_poll_logger = raw_poll_logger
@@ -146,6 +155,21 @@ class ILinkClient:
         """
         chunks = self._split_text(text, max_len=4000)
         for chunk in chunks:
+            if not self._send_chunk(to_user_id, context_token, chunk):
+                # Abandon remaining chunks — a partial turn is better than
+                # duplicating already-delivered chunks via a whole-fn retry.
+                return False
+        return True
+
+    def _send_chunk(self, to_user_id: str, context_token: str, chunk: str) -> bool:
+        """POST one text chunk, retrying business rejections (ret!=0 / non-200).
+
+        Chunk-local so a mid-turn retry never re-sends earlier chunks. Transport
+        exceptions bubble up to the ``@with_retry`` decorator on send_text.
+        """
+        attempts = self._send_retry_attempts
+        base = self._send_retry_base_sec
+        for attempt in range(attempts):
             client_id = f"synapse-wx:{uuid.uuid4().hex[:16]}"
             item: dict = {"type": 1, "text_item": {"text": chunk}}
             msg: dict = {
@@ -174,14 +198,26 @@ class ILinkClient:
                 )
                 return False
             ret = resp_data.get("ret")
-            if resp.status_code != 200 or (ret is not None and ret != 0):
+            if resp.status_code == 200 and (ret is None or ret == 0):
+                return True
+            if attempt == attempts - 1:
                 logger.error(
                     "Failed to send message: ret=%s, errmsg=%s",
                     resp_data.get("ret"),
                     resp_data.get("errmsg", resp.text[:200]),
                 )
                 return False
-        return True
+            delay = base * (2**attempt) + random.uniform(0, 0.5)
+            logger.warning(
+                "send chunk rejected (attempt %d/%d): ret=%s errmsg=%s — retry in %.2fs",
+                attempt + 1,
+                attempts,
+                ret,
+                resp_data.get("errmsg", resp.text[:200]),
+                delay,
+            )
+            time.sleep(delay)
+        return False
 
     def send_typing(self, to_user_id: str, context_token: str) -> None:
         """Best-effort typing indicator. Swallows all errors.

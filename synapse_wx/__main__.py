@@ -138,7 +138,11 @@ def main() -> int:
     raw_poll_logger = (
         RawPollLogger(cfg.raw_poll_log_until) if cfg.raw_poll_log_until else None
     )
-    ilink = ILinkClient(raw_poll_logger=raw_poll_logger)
+    ilink = ILinkClient(
+        raw_poll_logger=raw_poll_logger,
+        send_retry_attempts=cfg.send_retry_attempts,
+        send_retry_base_sec=cfg.send_retry_base_sec,
+    )
     if raw_poll_logger is not None and raw_poll_logger.active():
         logger.info(
             "raw poll logging ON until %s → %s",

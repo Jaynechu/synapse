@@ -20,6 +20,12 @@ DEFAULT_CC_CWD = str(Path.home())
 class Config:
     sessionend_command: str = "python -m marrow.sessionend_async --sid {sid}"
     poll_interval_sec: float = 1.0
+    # Spacing between outbound reply bubbles. Wider gap avoids tripping the
+    # iLink rate limit (ret=-2) on multi-bubble turns.
+    bubble_gap_sec: float = 0.8
+    # Chunk-local retry for send_text business rejections (ret!=0).
+    send_retry_attempts: int = 3
+    send_retry_base_sec: float = 1.0
     target_wxid: str = ""
     marrow_repo_cmd: str = ""
     cc_cwd: str = ""  # cwd cc subprocess spawns in; empty = $HOME
@@ -77,6 +83,20 @@ def load_config(path: Path | None = None) -> Config:
         val = loop["poll_interval_sec"]
         if isinstance(val, (int, float)) and val > 0:
             cfg.poll_interval_sec = float(val)
+    if isinstance(loop, dict) and "bubble_gap_sec" in loop:
+        val = loop["bubble_gap_sec"]
+        if isinstance(val, (int, float)) and val >= 0:
+            cfg.bubble_gap_sec = float(val)
+    send = data.get("send") or {}
+    if isinstance(send, dict):
+        if "send_retry_attempts" in send:
+            val = send["send_retry_attempts"]
+            if isinstance(val, int) and val >= 1:
+                cfg.send_retry_attempts = val
+        if "send_retry_base_sec" in send:
+            val = send["send_retry_base_sec"]
+            if isinstance(val, (int, float)) and val >= 0:
+                cfg.send_retry_base_sec = float(val)
     user = data.get("user") or {}
     if isinstance(user, dict) and "target_wxid" in user:
         val = user["target_wxid"]
