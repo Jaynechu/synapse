@@ -602,7 +602,7 @@ class MainLoop:
                         if self._alerts is not None:
                             try:
                                 self._alerts.write(
-                                    "error",
+                                    "warn",
                                     "wx_send_rejected",
                                     f"send_text rejected at bubble {i + 1}/{total}; "
                                     f"{lost} bubble(s) of the turn lost",
