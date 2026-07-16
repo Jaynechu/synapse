@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from synapse_core import last_active
+from synapse_core import cortex_kick, last_active
 from synapse_core.marrow_session import get_session_created_at, regen_suppress_path
 from synapse_core.alerts import AlertSink
 from synapse_core.anchor import quote_prefix, time_anchor
@@ -394,6 +394,34 @@ class MainLoop:
                     fingerprint="wx.outbox_orphan",
                 )
 
+    def _is_from_her(self, from_wxid: str | None) -> bool:
+        """Net-new sender-identity check: inbound from_wxid == [user].target_wxid.
+        Gates the watch/kick paths only."""
+        return bool(
+            self._cfg is not None
+            and self._cfg.target_wxid
+            and from_wxid
+            and from_wxid == self._cfg.target_wxid
+        )
+
+    def _inbound_from_her(self) -> None:
+        """Her message landed on wx -> claim any armed watches on wx (one kick),
+        and morning flag-pull (night flag + past morning_start -> kick). Never
+        raises; no-ops without kick_cmd. Reply path claims instantly."""
+        db = self._outbox_db()
+        kc = self._cfg.outbox_kick_cmd
+        try:
+            ids = cortex_kick.claim_reply(db, "wx") if db else []
+            if ids:
+                note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
+                cortex_kick.kick(kc, "reply", note_id=note_id)
+            if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
+                    cortex_kick.past_morning_start(
+                        self._cfg.night_morning_start, self._cfg.timezone):
+                cortex_kick.kick(kc, "morning")
+        except Exception as e:
+            logger.warning("inbound-from-her kick failed: %s", e)
+
     def _outbox_scan(self) -> None:
         """Claim pending wx rows and deliver via ILink.send_text. Folded into
         tick() so it fires only after a poll-ok (same guarantee as the restart
@@ -407,6 +435,16 @@ class MainLoop:
         if now - self._last_outbox_scan_ts < self._cfg.outbox_poll_interval_s:
             return
         self._last_outbox_scan_ts = now
+        # P6 watch_timeout: sent+armed rows past their timeout with no reply in
+        # events -> claim (armed->fired) + one kick each. Single-row UPDATE
+        # resolves any race with a concurrent reply claim (one winner).
+        try:
+            for w in cortex_kick.claim_timeouts(db, "wx"):
+                cortex_kick.kick(
+                    self._cfg.outbox_kick_cmd, "timeout",
+                    note_id=w["id"], minutes=w["minutes"])
+        except Exception as e:
+            logger.warning("watch_timeout kick failed: %s", e)
         rows = outbox.claim_pending(db)
         for row in rows:
             self._deliver_outbox_row(row["id"], row["body"] or "")
@@ -486,6 +524,10 @@ class MainLoop:
                     self._last_from_wxid = from_wxid
                 if ctx_token:
                     self._last_ctx_token = ctx_token
+            # P6: inbound from her (from_wxid == target) drives watch-reply +
+            # morning flag-pull kicks. Any other sender is ignored here.
+            if self._is_from_her(from_wxid):
+                self._inbound_from_her()
             try:
                 text = self._ilink.extract_text(msg)
             except Exception as e:
