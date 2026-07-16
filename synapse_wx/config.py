@@ -69,6 +69,12 @@ class Config:
     # date (inclusive, "YYYY-MM-DD"). Empty = off. Auto-expires after the date.
     raw_poll_log_until: str = ""
 
+    # Outbox (cross-channel note delivery). Feature no-ops without target_wxid.
+    # poll folds into MainLoop.tick; retry_max counts send_text CALLS (send_text
+    # chunks + retries internally — no stacked retry on top).
+    outbox_poll_interval_s: float = 5.0
+    outbox_retry_max: int = 3
+
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
     ack_overrides: dict | None = None
 
@@ -124,6 +130,14 @@ def load_config(path: Path | None = None) -> Config:
         val = debug["raw_poll_log_until"]
         if isinstance(val, str):
             cfg.raw_poll_log_until = val
+    outbox = data.get("outbox") or {}
+    if isinstance(outbox, dict):
+        pi = outbox.get("poll_interval_s")
+        if isinstance(pi, (int, float)) and not isinstance(pi, bool) and pi > 0:
+            cfg.outbox_poll_interval_s = float(pi)
+        rm = outbox.get("retry_max")
+        if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
+            cfg.outbox_retry_max = rm
     provider = data.get("provider") or {}
     if isinstance(provider, dict) and "cc_cwd" in provider:
         val = provider["cc_cwd"]

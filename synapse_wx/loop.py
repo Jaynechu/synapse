@@ -25,6 +25,7 @@ from synapse_core.providers.base import Provider
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
+from . import outbox
 from .split import (
     format_thinking_bubbles,
     merge_bubbles_to_cap,
@@ -173,6 +174,9 @@ class MainLoop:
         self._announce_pending: bool = False
         self._announce_target: str = ""
         self._announce_text: str = ""
+        # Outbox scan gate: tick() fires every poll_interval_sec (~1s) but the
+        # outbox scan runs at its own cadence. 0.0 = due immediately next poll.
+        self._last_outbox_scan_ts: float = 0.0
         # E-polish /thinking: captured between _drain_recv → maybe_flush so we
         # can emit a single 【思考】 bubble per turn when state.thinking_on.
         self._last_thinking: str = ""
@@ -366,6 +370,89 @@ class MainLoop:
         self._announce_target = target_wxid
         self._announce_text = text
 
+    # ── outbox (cross-channel note delivery) ───────────────────────
+
+    def _outbox_db(self) -> str:
+        if self._cfg is None or not self._cfg.marrow_db_path:
+            return ""
+        return str(Path(self._cfg.marrow_db_path).expanduser())
+
+    def sweep_outbox_orphans(self) -> None:
+        """Startup: fail any stale 'claimed' wx row (crash orphan), never resend."""
+        if self._cfg is None or not self._cfg.target_wxid:
+            return
+        db = self._outbox_db()
+        if not db:
+            return
+        for row_id in outbox.sweep_orphan_claimed(db):
+            logger.warning("outbox orphan claimed row #%d -> failed (not resent)", row_id)
+            if self._alerts is not None:
+                self._alerts.write(
+                    "warn", "wx_outbox_orphan",
+                    f"outbox row #{row_id} was claimed at crash — failed, not resent",
+                    source="synapse-wx",
+                    fingerprint="wx.outbox_orphan",
+                )
+
+    def _outbox_scan(self) -> None:
+        """Claim pending wx rows and deliver via ILink.send_text. Folded into
+        tick() so it fires only after a poll-ok (same guarantee as the restart
+        self-announce). No-ops without target_wxid."""
+        if self._cfg is None or not self._cfg.target_wxid:
+            return
+        db = self._outbox_db()
+        if not db:
+            return
+        now = self._clock()
+        if now - self._last_outbox_scan_ts < self._cfg.outbox_poll_interval_s:
+            return
+        self._last_outbox_scan_ts = now
+        rows = outbox.claim_pending(db)
+        for row in rows:
+            self._deliver_outbox_row(row["id"], row["body"] or "")
+
+    def _deliver_outbox_row(self, row_id: int, body: str) -> None:
+        """Deliver one claimed row. send_text chunks + retries internally, so
+        retry_max here counts whole send_text CALLS (no stacked retry). A False
+        return means a chunk was rejected and later chunks abandoned — the row
+        is failed with an alert, never bubble-resent."""
+        db = self._outbox_db()
+        target = self._cfg.target_wxid
+        attempts = 0
+        for _ in range(self._cfg.outbox_retry_max):
+            attempts += 1
+            try:
+                ok = self._ilink.send_text(target, "", body)
+            except Exception as e:
+                logger.warning(
+                    "outbox row #%d send raised (attempt %d/%d): %s",
+                    row_id, attempts, self._cfg.outbox_retry_max, e,
+                )
+                continue
+            if ok:
+                outbox.mark_sent(db, row_id)
+                return
+            # Partial-chunk failure: send_text abandoned later chunks. Retrying
+            # the whole call would re-send delivered chunks — do not. Fail now.
+            logger.error("outbox row #%d -> partial-chunk failure, no resend", row_id)
+            outbox.mark_failed(db, row_id, retry_count=attempts)
+            self._alert_outbox_failed(row_id, attempts, partial=True)
+            return
+        outbox.mark_failed(db, row_id, retry_count=attempts)
+        logger.error("outbox row #%d -> failed after retries", row_id)
+        self._alert_outbox_failed(row_id, attempts, partial=False)
+
+    def _alert_outbox_failed(self, row_id: int, attempts: int, *, partial: bool) -> None:
+        if self._alerts is None:
+            return
+        reason = "partial-chunk failure" if partial else f"send failed after {attempts} attempts"
+        self._alerts.write(
+            "warn", "wx_outbox_failed",
+            f"outbox row #{row_id} {reason}",
+            source="synapse-wx",
+            fingerprint="wx.outbox_failed",
+        )
+
     def tick(self) -> None:
         """One inbound poll: route bridge commands; buffer the rest for the provider."""
         try:
@@ -386,6 +473,9 @@ class MainLoop:
                 logger.info("restart self-announce sent to %s", target)
             except Exception as e:
                 logger.warning("restart self-announce failed: %s", e)
+        # Outbox delivery shares the self-announce slot: only after a poll-ok,
+        # so iLink is warm and a claimed row never sends into a dead client.
+        self._outbox_scan()
         for msg in msgs or []:
             from_wxid = msg.get("from_wxid") or msg.get("from_user_id") or ""
             ctx_token = msg.get("context_token") or ""
