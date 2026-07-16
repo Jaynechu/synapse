@@ -48,6 +48,11 @@ class TgConfig:
     send_retry_max: int = 2
     retry_after_cap_sec: float = 60.0
 
+    # Outbox (cross-channel note delivery). Feature no-ops without chat_id.
+    chat_id: int | None = None
+    outbox_poll_interval_s: float = 5.0
+    outbox_retry_max: int = 3
+
     # CWD presets
     cwd_presets: dict = field(default_factory=dict)
 
@@ -71,6 +76,21 @@ def load_config(path: Path | None = None) -> TgConfig:
     if isinstance(bot, dict):
         if isinstance(bot.get("token"), str):
             cfg.bot_token = bot["token"]
+
+    tg = data.get("tg") or {}
+    if isinstance(tg, dict):
+        cid = tg.get("chat_id")
+        if isinstance(cid, int) and not isinstance(cid, bool):
+            cfg.chat_id = cid
+
+    outbox = data.get("outbox") or {}
+    if isinstance(outbox, dict):
+        pi = outbox.get("poll_interval_s")
+        if isinstance(pi, (int, float)) and not isinstance(pi, bool) and pi > 0:
+            cfg.outbox_poll_interval_s = float(pi)
+        rm = outbox.get("retry_max")
+        if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
+            cfg.outbox_retry_max = rm
 
     provider = data.get("provider") or {}
     if isinstance(provider, dict):

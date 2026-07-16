@@ -6,6 +6,18 @@
 # Get from @BotFather on Telegram
 token = ""
 
+[tg]
+# Authorized recipient chat id for outbound notes (cross-channel drop).
+# REQUIRED for the outbox feature — without it, note delivery is disabled.
+# chat_id = 123456789
+
+[outbox]
+# Bridge scan cadence for pending outbox notes (seconds).
+poll_interval_s = 5
+# Inline send-call retries per bubble before the row is marked failed.
+# NOT whole-row redelivery: a crash-orphan claimed row is failed, never resent.
+retry_max = 3
+
 # ── WeChat ────────────────────────────────────────────
 [user]
 # Your wxid — run `python -m synapse_wx.ilink` to find it after QR login

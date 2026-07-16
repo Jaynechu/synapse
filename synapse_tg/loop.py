@@ -41,7 +41,8 @@ from .media.inbound import (
 )
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
-from .split import split_for_tg_typed
+from . import outbox
+from .split import split_for_tg, split_for_tg_typed
 from .typing_action import TypingAction
 
 if TYPE_CHECKING:
@@ -591,6 +592,76 @@ class TgLoop:
                 await asyncio.sleep(_SEND_GAP_SEC)
             except Exception as e:
                 logger.warning("send_extra_bubbles failed: %s", e)
+
+    def _outbox_db(self) -> str:
+        if not self._cfg.marrow_db:
+            return ""
+        return str(Path(self._cfg.marrow_db).expanduser())
+
+    def sweep_outbox_orphans(self) -> None:
+        """Startup: fail any stale 'claimed' tg row (crash orphan), never resend."""
+        if self._cfg.chat_id is None:
+            return
+        db = self._outbox_db()
+        if not db:
+            return
+        for row_id in outbox.sweep_orphan_claimed(db):
+            logger.warning("outbox orphan claimed row #%d -> failed (not resent)", row_id)
+            if self._alerts is not None:
+                self._alerts.write(
+                    "warn", "tg_outbox_orphan",
+                    f"outbox row #{row_id} was claimed at crash — failed, not resent",
+                    source="synapse-tg",
+                    fingerprint="tg.outbox_orphan",
+                )
+
+    async def outbox_poll(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Deliver pending outbox notes targeted at tg. Runs on the job queue."""
+        if self._cfg.chat_id is None:
+            return
+        db = self._outbox_db()
+        if not db:
+            return
+        rows = outbox.claim_pending(db)
+        if not rows:
+            return
+        bot = self._bot or context.bot
+        chat_id = self._cfg.chat_id
+        for row in rows:
+            await self._deliver_outbox_row(bot, chat_id, row["id"], row["body"] or "")
+
+    async def _deliver_outbox_row(
+        self, bot: Bot, chat_id: int, row_id: int, body: str
+    ) -> None:
+        db = self._outbox_db()
+        bubbles = split_for_tg(body) or [body]
+        attempts = 0
+        for bubble in bubbles:
+            sent = False
+            for attempt in range(self._cfg.outbox_retry_max):
+                attempts += 1
+                try:
+                    await bot.send_message(chat_id=chat_id, text=bubble)
+                    sent = True
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "outbox row #%d send failed (attempt %d/%d): %s",
+                        row_id, attempt + 1, self._cfg.outbox_retry_max, e,
+                    )
+            if not sent:
+                outbox.mark_failed(db, row_id, retry_count=attempts)
+                logger.error("outbox row #%d -> failed after retries", row_id)
+                if self._alerts is not None:
+                    self._alerts.write(
+                        "warn", "tg_outbox_failed",
+                        f"outbox row #{row_id} send failed after {attempts} attempts",
+                        source="synapse-tg",
+                        fingerprint="tg.outbox_failed",
+                    )
+                return
+            await asyncio.sleep(_SEND_GAP_SEC)
+        outbox.mark_sent(db, row_id)
 
     def _track(self, bot: Bot, chat_id: int, user_id: int | None = None) -> None:
         self._bot = bot
