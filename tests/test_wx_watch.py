@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -67,7 +67,8 @@ def _armed_reply(db, target="wx"):
 
 
 def _loop(tmp_path, db, ilink=None, *, target_wxid="wxid_her",
-          kick_cmd=("py", "-m", "cortex.kick"), wake_state_file="", morning="06:00"):
+          kick_cmd=("py", "-m", "cortex.kick"), wake_state_file="", morning="06:00",
+          wallclock=None):
     if ilink is None:
         ilink = FakeILink()
     clock = FakeClock()
@@ -81,7 +82,7 @@ def _loop(tmp_path, db, ilink=None, *, target_wxid="wxid_her",
         sessions=SessionTracker(state_path=tmp_path / "sessions.json"),
         idle_loop=None, buffer=InboundBuffer(clock=clock),
         poll_interval_sec=0.01, clock=clock,
-        wallclock=lambda: datetime(2026, 7, 17, 12, 0),
+        wallclock=wallclock or (lambda: datetime(2026, 7, 17, 12, 0)),
         sleeper=lambda _s: None, alert_dir=tmp_path / "alerts", cfg=cfg,
         channel="wx", last_active_path=tmp_path / "last_active.json",
         channel_label="CC-WX", alerts=None,
@@ -135,11 +136,13 @@ def test_media_only_reply_kick_carries_placeholder(tmp_path, kicks):
     assert reply[0]["text"] == "[media]"       # config default placeholder
 
 
-def _sent_plain(db, target="wx"):
+def _sent_plain(db, target="wx", sent_at="2026-07-17T00:00:00Z"):
+    # Real mark_sent always pairs status='sent' with sent_at in one UPDATE
+    # (synapse_wx/outbox.py) — no production row is 'sent' with sent_at NULL.
     conn = sqlite3.connect(db)
     cur = conn.execute(
-        "INSERT INTO outbox (target, body, status) VALUES (?, 'x', 'sent')",
-        (target,))
+        "INSERT INTO outbox (target, body, status, sent_at) VALUES (?, 'x', 'sent', ?)",
+        (target, sent_at))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
@@ -160,6 +163,74 @@ def test_inbound_stamps_receipt_even_without_watch(tmp_path, kicks):
     conn.close()
     assert row[0] and row[1] == "hey"
     assert [k["kind"] for k in kicks] == []   # no watch -> no kick
+
+
+def test_same_batch_note_sent_after_poll_tick_not_stamped(tmp_path, kicks):
+    # F1 (wx): wx has no native per-message timestamp — the bound uses this
+    # tick's wallclock (UTC-aware here so the boundary math is machine-tz
+    # independent). A note "sent" AFTER the tick wallclock (as if inserted
+    # mid-tick by a concurrent poll) must not be stamped.
+    db = _db(tmp_path)
+    rid = _sent_plain(db, sent_at="2026-07-17T12:05:00Z")
+    ilink = FakeILink(msgs=[{"from_wxid": "wxid_her", "text": "hey"}])
+    loop, _ = _loop(tmp_path, db, ilink,
+                     wallclock=lambda: datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc))
+    loop.tick()
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT replied_at, reply_text FROM outbox WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row[0] is None and row[1] is None
+
+
+def test_note_sent_before_poll_tick_stamped(tmp_path, kicks):
+    db = _db(tmp_path)
+    rid = _sent_plain(db, sent_at="2026-07-17T11:55:00Z")
+    ilink = FakeILink(msgs=[{"from_wxid": "wxid_her", "text": "hey"}])
+    loop, _ = _loop(tmp_path, db, ilink,
+                     wallclock=lambda: datetime(2026, 7, 17, 12, 0, tzinfo=timezone.utc))
+    loop.tick()
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT replied_at, reply_text FROM outbox WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    assert row[0] and row[1] == "hey"
+
+
+class FakeILinkMedia(FakeILink):
+    @staticmethod
+    def extract_media(msg):
+        return msg.get("media", [])
+
+
+def test_captioned_photo_receipt_carries_caption(tmp_path, kicks):
+    # F2 (wx): iLink already merges caption into extract_text; the fix adds
+    # the media-type tag so the receipt shows "[image] <caption>".
+    db = _db(tmp_path)
+    _armed_reply(db)
+    ilink = FakeILinkMedia(msgs=[{
+        "from_wxid": "wxid_her", "text": "look at this",
+        "media": [{"type": "image"}],
+    }])
+    loop, _ = _loop(tmp_path, db, ilink)
+    loop.tick()
+    reply = [k for k in kicks if k["kind"] == "reply"]
+    assert reply
+    assert reply[0]["text"] == "[image] look at this"
+
+
+def test_uncaptioned_photo_receipt_carries_bare_tag(tmp_path, kicks):
+    db = _db(tmp_path)
+    _armed_reply(db)
+    ilink = FakeILinkMedia(msgs=[{
+        "from_wxid": "wxid_her", "text": "",
+        "media": [{"type": "image"}],
+    }])
+    loop, _ = _loop(tmp_path, db, ilink)
+    loop.tick()
+    reply = [k for k in kicks if k["kind"] == "reply"]
+    assert reply
+    assert reply[0]["text"] == "[image]"
 
 
 def test_tick_other_sender_no_kick(tmp_path, kicks):

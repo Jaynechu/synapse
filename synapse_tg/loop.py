@@ -675,7 +675,8 @@ class TgLoop:
         outbox.mark_sent(db, row_id)
 
     def _track(self, bot: Bot, chat_id: int, user_id: int | None = None,
-               text: str = "") -> None:
+               text: str = "", msg_date: datetime | None = None,
+               media_type: str = "") -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
         if user_id is not None:
@@ -685,9 +686,12 @@ class TgLoop:
         # P6: inbound from her (chat_id matches the authorized recipient) drives
         # watch-reply + morning flag-pull kicks. Any other chat is ignored here.
         # `text` = her reply body, threaded into the reply kick so the wakeup
-        # note shows WHAT she said (empty for media-only turns).
+        # note shows WHAT she said (empty for media-only turns). `msg_date` =
+        # Telegram's native message timestamp, bounding the receipt stamp to
+        # notes sent at/before this message (F1). `media_type` tags a
+        # media-only turn (e.g. "photo") so the receipt shows what she sent.
         if self._is_from_her(chat_id):
-            self._inbound_from_her(text)
+            self._inbound_from_her(text, msg_date=msg_date, media_type=media_type)
 
     def _is_from_her(self, chat_id: int | None) -> bool:
         """Net-new sender-identity check: inbound chat_id == the authorized
@@ -698,21 +702,34 @@ class TgLoop:
             and int(chat_id) == int(self._cfg.chat_id)
         )
 
-    def _inbound_from_her(self, text: str = "") -> None:
+    def _inbound_from_her(self, text: str = "", msg_date: datetime | None = None,
+                          media_type: str = "") -> None:
         """Her message landed on tg -> claim any armed watches on tg (one kick),
         and morning flag-pull (night flag + past morning_start -> kick). Never
         raises; no-ops without kick_cmd. Reply path claims instantly (no other
         DB query). `text` = her reply body, attached to the reply kick; a
-        media-only reply (no extractable text) substitutes the config
-        placeholder so the reason line never renders an empty quote."""
+        media-only reply (no extractable text) substitutes "[<media_type>]" (or
+        the config placeholder when the type is unknown) so the reason line
+        never renders an empty quote. `msg_date` bounds the receipt stamp to
+        notes sent at/before this message (F1: same-poll-batch false stamp)."""
         db = self._outbox_db()
         kc = self._cfg.outbox_kick_cmd
-        kick_text = text.strip() if text else self._cfg.outbox_kick_media_placeholder
+        caption = text.strip() if text else ""
+        if media_type:
+            kick_text = f"[{media_type}] {caption}" if caption else f"[{media_type}]"
+        elif caption:
+            kick_text = caption
+        else:
+            kick_text = self._cfg.outbox_kick_media_placeholder
+        inbound_at = None
+        if msg_date is not None:
+            inbound_at = msg_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             if db:
                 cortex_kick.stamp_receipts(
                     db, "tg", kick_text,
-                    text_chars=self._cfg.outbox_receipt_text_chars)
+                    text_chars=self._cfg.outbox_receipt_text_chars,
+                    inbound_at=inbound_at)
             ids = cortex_kick.claim_reply(db, "tg") if db else []
             if ids:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
@@ -732,7 +749,8 @@ class TgLoop:
         if not text:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid, text=text)
+        self._track(context.bot, update.message.chat_id, uid, text=text,
+                     msg_date=update.message.date)
 
         action, ack = self._registry.dispatch(text)
         inject = self._registry.pending_rewrite
@@ -768,7 +786,9 @@ class TgLoop:
         if update.message is None or not update.message.photo:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid,
+                     text=update.message.caption or "",
+                     msg_date=update.message.date, media_type="photo")
         paths = await materialize_photo(context.bot, update.message, self._cfg.data_dir)
         if paths:
             instruction = build_read_instruction(paths)
@@ -781,7 +801,9 @@ class TgLoop:
         if update.message is None or not update.message.animation:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid,
+                     text=update.message.caption or "",
+                     msg_date=update.message.date, media_type="animation")
         path = await materialize_animation(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
@@ -794,7 +816,9 @@ class TgLoop:
         if update.message is None or not update.message.document:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid,
+                     text=update.message.caption or "",
+                     msg_date=update.message.date, media_type="document")
         path = await materialize_document(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
@@ -807,7 +831,8 @@ class TgLoop:
         if update.message is None or not update.message.sticker:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid,
+                     msg_date=update.message.date, media_type="sticker")
         path = await materialize_sticker(context.bot, update.message, self._cfg.data_dir)
         if path:
             stk = update.message.sticker
@@ -820,7 +845,9 @@ class TgLoop:
         if update.message is None or not update.message.video:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid,
+                     text=update.message.caption or "",
+                     msg_date=update.message.date, media_type="video")
         path = await materialize_video(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])

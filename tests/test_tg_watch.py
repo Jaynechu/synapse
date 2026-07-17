@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,69 @@ def test_inbound_stamps_receipt_even_without_watch(tmp_path, kicks):
     conn.close()
     assert row[0] and row[1] == "hey"
     assert kicks == []                           # no watch -> no kick
+
+
+def test_same_batch_old_inbound_does_not_stamp_new_note(tmp_path, kicks):
+    # F1: her inbound message (native tg timestamp) is OLDER than a note the
+    # same poll batch just sent. The just-sent note must NOT be stamped as
+    # if she'd already replied to it.
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    cur = conn.execute(
+        "INSERT INTO outbox (target, body, status, sent_at)"
+        " VALUES ('tg', 'note', 'sent', '2026-07-17T10:05:00Z')")
+    conn.commit()
+    note_id = cur.lastrowid
+    conn.close()
+    loop = _loop(tmp_path, db, chat_id=999)
+    her_older_msg_date = datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
+    loop._track(_Bot(), 999, user_id=5, text="hey", msg_date=her_older_msg_date)
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT replied_at, reply_text FROM outbox WHERE id=?", (note_id,)).fetchone()
+    conn.close()
+    assert row[0] is None and row[1] is None
+
+
+def test_genuine_later_reply_stamps_note(tmp_path, kicks):
+    # Note sent BEFORE her inbound native timestamp -> a real reply, stamp it.
+    db = _db(tmp_path)
+    conn = sqlite3.connect(db)
+    cur = conn.execute(
+        "INSERT INTO outbox (target, body, status, sent_at)"
+        " VALUES ('tg', 'note', 'sent', '2026-07-17T09:55:00Z')")
+    conn.commit()
+    note_id = cur.lastrowid
+    conn.close()
+    loop = _loop(tmp_path, db, chat_id=999)
+    her_later_msg_date = datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
+    loop._track(_Bot(), 999, user_id=5, text="got it love", msg_date=her_later_msg_date)
+    conn = sqlite3.connect(db)
+    row = conn.execute(
+        "SELECT replied_at, reply_text FROM outbox WHERE id=?", (note_id,)).fetchone()
+    conn.close()
+    assert row[0] and row[1] == "got it love"
+
+
+def test_captioned_photo_receipt_carries_caption(tmp_path, kicks):
+    # F2: captioned media -> receipt text = "[photo] <caption>", not bare tag.
+    db = _db(tmp_path)
+    _armed_reply(db)
+    loop = _loop(tmp_path, db, chat_id=999)
+    loop._track(_Bot(), 999, user_id=5, text="look at this",
+                msg_date=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
+                media_type="photo")
+    assert kicks[0]["text"] == "[photo] look at this"
+
+
+def test_uncaptioned_photo_receipt_carries_bare_tag(tmp_path, kicks):
+    db = _db(tmp_path)
+    _armed_reply(db)
+    loop = _loop(tmp_path, db, chat_id=999)
+    loop._track(_Bot(), 999, user_id=5,
+                msg_date=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
+                media_type="photo")
+    assert kicks[0]["text"] == "[photo]"
 
 
 def test_other_chat_no_kick(tmp_path, kicks):

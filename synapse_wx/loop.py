@@ -404,21 +404,34 @@ class MainLoop:
             and from_wxid == self._cfg.target_wxid
         )
 
-    def _inbound_from_her(self, text: str = "") -> None:
+    def _inbound_from_her(self, text: str = "", media_type: str = "") -> None:
         """Her message landed on wx -> claim any armed watches on wx (one kick),
         and morning flag-pull (night flag + past morning_start -> kick). Never
         raises; no-ops without kick_cmd. Reply path claims instantly. `text` =
-        her reply body, attached to the reply kick; a media-only reply (no
-        extractable text) substitutes the config placeholder so the reason line
-        never renders an empty quote."""
+        her reply body (iLink already merges a caption into the same text item),
+        attached to the reply kick; `media_type` (e.g. "image") tags it as
+        "[<type>] <caption>" when present, or "[<type>]" alone for a caption-less
+        media turn — falls back to the config placeholder when the type is
+        unknown. wx has no native per-message timestamp (verified: absent from
+        the iLink payload, code and tests alike) so the F1 receipt bound uses
+        this poll tick's wallclock instead — sufficient because the bug is
+        same-poll-batch ordering, not exact send time."""
         db = self._outbox_db()
         kc = self._cfg.outbox_kick_cmd
-        kick_text = text.strip() if text else self._cfg.outbox_kick_media_placeholder
+        caption = text.strip() if text else ""
+        if media_type:
+            kick_text = f"[{media_type}] {caption}" if caption else f"[{media_type}]"
+        elif caption:
+            kick_text = caption
+        else:
+            kick_text = self._cfg.outbox_kick_media_placeholder
+        inbound_at = self._wallclock().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             if db:
                 cortex_kick.stamp_receipts(
                     db, "wx", kick_text,
-                    text_chars=self._cfg.outbox_receipt_text_chars)
+                    text_chars=self._cfg.outbox_receipt_text_chars,
+                    inbound_at=inbound_at)
             ids = cortex_kick.claim_reply(db, "wx") if db else []
             if ids:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
@@ -538,13 +551,10 @@ class MainLoop:
             except Exception as e:
                 logger.warning("extract_text failed: %s", e)
                 text = ""
-            # P6: inbound from her (from_wxid == target) drives watch-reply +
-            # morning flag-pull kicks. Any other sender is ignored here. Her
-            # reply text rides the reply kick (extracted above; "" for media).
-            if self._is_from_her(from_wxid):
-                self._inbound_from_her(text)
             # C0: surface media events alongside text so a pure-media bubble
-            # (e.g. just a photo, no caption) still triggers a turn.
+            # (e.g. just a photo, no caption) still triggers a turn. Extracted
+            # ahead of the inbound-from-her call below so the receipt/kick
+            # text can carry a media-type tag (F2), not just the bare caption.
             media_events: list[dict] = []
             extract_media = getattr(self._ilink, "extract_media", None)
             if extract_media is not None:
@@ -553,6 +563,12 @@ class MainLoop:
                 except Exception as e:
                     logger.warning("extract_media failed: %s", e)
                     media_events = []
+            # P6: inbound from her (from_wxid == target) drives watch-reply +
+            # morning flag-pull kicks. Any other sender is ignored here. Her
+            # reply text rides the reply kick (extracted above; "" for media).
+            if self._is_from_her(from_wxid):
+                media_type = media_events[0].get("type", "") if media_events else ""
+                self._inbound_from_her(text, media_type=media_type)
             if not text and not media_events:
                 continue
             # E-polish quote (inbound): iLink may carry a `reference` field on
