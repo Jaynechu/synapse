@@ -53,6 +53,14 @@ class TgConfig:
     outbox_poll_interval_s: float = 5.0
     outbox_retry_max: int = 3
 
+    # Watch + kick (P6). kick_cmd = cortex.kick launcher (venv python + module),
+    # e.g. ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = watch/kick off.
+    # Morning flag-pull reads the cortex night flag + morning_start.
+    outbox_kick_cmd: list = field(default_factory=list)
+    cortex_wake_state_file: str = ""
+    night_morning_start: str = "06:00"
+    timezone: str = "Australia/Melbourne"
+
     # CWD presets
     cwd_presets: dict = field(default_factory=dict)
 
@@ -91,6 +99,24 @@ def load_config(path: Path | None = None) -> TgConfig:
         rm = outbox.get("retry_max")
         if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
             cfg.outbox_retry_max = rm
+        kc = outbox.get("kick_cmd")
+        if isinstance(kc, list):
+            cfg.outbox_kick_cmd = [str(x) for x in kc]
+        elif isinstance(kc, str) and kc.strip():
+            cfg.outbox_kick_cmd = kc
+
+    cortex = data.get("cortex") or {}
+    if isinstance(cortex, dict):
+        ws = cortex.get("wake_state_file")
+        if isinstance(ws, str):
+            cfg.cortex_wake_state_file = ws
+        ms = cortex.get("morning_start")
+        if isinstance(ms, str) and ms.strip():
+            cfg.night_morning_start = ms
+
+    core = data.get("core") or {}
+    if isinstance(core, dict) and isinstance(core.get("timezone"), str):
+        cfg.timezone = core["timezone"]
 
     provider = data.get("provider") or {}
     if isinstance(provider, dict):

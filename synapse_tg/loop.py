@@ -39,6 +39,7 @@ from .media.inbound import (
     materialize_sticker,
     materialize_video,
 )
+from synapse_core import cortex_kick
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
 from . import outbox
@@ -622,6 +623,16 @@ class TgLoop:
         db = self._outbox_db()
         if not db:
             return
+        # P6 watch_timeout: sent+armed rows past their timeout with no reply in
+        # events -> claim (armed->fired) + one kick each. Single-row UPDATE
+        # resolves any race with a concurrent reply claim (one winner).
+        try:
+            for w in cortex_kick.claim_timeouts(db, "tg"):
+                cortex_kick.kick(
+                    self._cfg.outbox_kick_cmd, "timeout",
+                    note_id=w["id"], minutes=w["minutes"])
+        except Exception as e:
+            logger.warning("watch_timeout kick failed: %s", e)
         rows = outbox.claim_pending(db)
         if not rows:
             return
@@ -670,6 +681,38 @@ class TgLoop:
             self._pending_user_id = user_id
             if self._turn_user_id is not None and user_id == self._turn_user_id:
                 self._same_sender_interrupted = True
+        # P6: inbound from her (chat_id matches the authorized recipient) drives
+        # watch-reply + morning flag-pull kicks. Any other chat is ignored here.
+        if self._is_from_her(chat_id):
+            self._inbound_from_her()
+
+    def _is_from_her(self, chat_id: int | None) -> bool:
+        """Net-new sender-identity check: inbound chat_id == the authorized
+        [tg].chat_id. Gates the watch/kick paths only."""
+        return (
+            self._cfg.chat_id is not None
+            and chat_id is not None
+            and int(chat_id) == int(self._cfg.chat_id)
+        )
+
+    def _inbound_from_her(self) -> None:
+        """Her message landed on tg -> claim any armed watches on tg (one kick),
+        and morning flag-pull (night flag + past morning_start -> kick). Never
+        raises; no-ops without kick_cmd. Reply path claims instantly (no other
+        DB query)."""
+        db = self._outbox_db()
+        kc = self._cfg.outbox_kick_cmd
+        try:
+            ids = cortex_kick.claim_reply(db, "tg") if db else []
+            if ids:
+                note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
+                cortex_kick.kick(kc, "reply", note_id=note_id)
+            if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
+                    cortex_kick.past_morning_start(
+                        self._cfg.night_morning_start, self._cfg.timezone):
+                cortex_kick.kick(kc, "morning")
+        except Exception as e:
+            logger.warning("inbound-from-her kick failed: %s", e)
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.message.text is None:
