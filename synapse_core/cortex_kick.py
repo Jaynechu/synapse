@@ -120,25 +120,36 @@ def claim_reply(db_path, channel: str) -> list[int]:
         conn.close()
 
 
-def stamp_receipts(db_path, channel: str, text: str, text_chars=None) -> int:
+def stamp_receipts(db_path, channel: str, text: str, text_chars=None,
+                    inbound_at: str | None = None) -> int:
     """Inbound from her on `channel`: stamp a reply receipt (replied_at UTC ISO +
-    truncated reply_text) on EVERY sent note delivered to that channel still
+    truncated reply_text) on every sent note delivered to that channel still
     awaiting one (replied_at IS NULL), watch or not. Single UPDATE. Returns the
     row count stamped (0 on none / no db). Never raises — the durable record is
-    best-effort, same defensive style as claim_reply."""
+    best-effort, same defensive style as claim_reply.
+
+    `inbound_at` (UTC ISO string, same format as outbox.sent_at) bounds the
+    stamp to rows sent at/before her inbound message: a same-poll batch that
+    delivers an outbound note AND processes her earlier inbound in one pass
+    must not stamp the just-sent note as if she'd already replied to it.
+    None (caller has no timestamp) falls back to the unbounded scope."""
     conn = _connect(db_path)
     if conn is None:
         return 0
     body = str(text or "")
     if text_chars and text_chars > 0:
         body = body[:int(text_chars)]
+    where = "target=? AND status='sent' AND replied_at IS NULL"
+    params: list = [body, channel]
+    if inbound_at:
+        where += " AND sent_at <= ?"
+        params.append(inbound_at)
     try:
         with conn:
             cur = conn.execute(
                 "UPDATE outbox SET replied_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),"
-                " reply_text=? WHERE target=? AND status='sent'"
-                " AND replied_at IS NULL",
-                (body, channel),
+                f" reply_text=? WHERE {where}",
+                params,
             )
         return cur.rowcount or 0
     except sqlite3.Error as e:

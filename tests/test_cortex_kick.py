@@ -114,12 +114,12 @@ def test_reply_second_call_no_double(tmp_path):
 
 # ── receipt stamp (P12) ───────────────────────────────────────────────────
 
-def _sent_plain(db, target="tg", *, status="sent", replied_at=None) -> int:
+def _sent_plain(db, target="tg", *, status="sent", replied_at=None, sent_at=None) -> int:
     conn = sqlite3.connect(db)
     cur = conn.execute(
-        "INSERT INTO outbox (target, body, status, replied_at)"
-        " VALUES (?, 'hi', ?, ?)",
-        (target, status, replied_at))
+        "INSERT INTO outbox (target, body, status, replied_at, sent_at)"
+        " VALUES (?, 'hi', ?, ?, ?)",
+        (target, status, replied_at, sent_at))
     conn.commit()
     rid = cur.lastrowid
     conn.close()
@@ -173,6 +173,47 @@ def test_stamp_receipts_truncates(tmp_path):
 def test_stamp_receipts_never_raises_on_missing_db(tmp_path):
     assert cortex_kick.stamp_receipts(str(tmp_path / "nope.db"), "tg", "hi") == 0
     assert cortex_kick.stamp_receipts(None, "tg", "hi") == 0
+
+
+# ── receipt stamp time bound (F1) ─────────────────────────────────────────
+
+def test_stamp_receipts_skips_note_sent_after_inbound(tmp_path):
+    # Same-poll batch: cortex sent a note AFTER her earlier inbound message's
+    # native timestamp. Must NOT stamp it as if she'd already replied.
+    db = _db(tmp_path)
+    note = _sent_plain(db, "tg", sent_at="2026-07-17T10:05:00Z")
+    n = cortex_kick.stamp_receipts(
+        db, "tg", "hey love", inbound_at="2026-07-17T10:00:00Z")
+    assert n == 0
+    assert _receipt(db, note)[0] is None
+
+
+def test_stamp_receipts_stamps_note_sent_before_inbound(tmp_path):
+    # Genuine later reply: the note went out before her inbound message.
+    db = _db(tmp_path)
+    note = _sent_plain(db, "tg", sent_at="2026-07-17T09:55:00Z")
+    n = cortex_kick.stamp_receipts(
+        db, "tg", "hey love", inbound_at="2026-07-17T10:00:00Z")
+    assert n == 1
+    assert _receipt(db, note)[1] == "hey love"
+
+
+def test_stamp_receipts_boundary_sent_at_equals_inbound_at(tmp_path):
+    db = _db(tmp_path)
+    note = _sent_plain(db, "tg", sent_at="2026-07-17T10:00:00Z")
+    n = cortex_kick.stamp_receipts(
+        db, "tg", "hi", inbound_at="2026-07-17T10:00:00Z")
+    assert n == 1
+
+
+def test_stamp_receipts_no_inbound_at_falls_back_to_unbounded(tmp_path):
+    # Caller with no native timestamp (legacy/defensive path) keeps old
+    # unconditional behaviour rather than silently stamping nothing.
+    db = _db(tmp_path)
+    note = _sent_plain(db, "tg", sent_at="2026-07-17T10:05:00Z")
+    n = cortex_kick.stamp_receipts(db, "tg", "hi")
+    assert n == 1
+    assert _receipt(db, note)[1] == "hi"
 
 
 # ── timeout claim ─────────────────────────────────────────────────────────
