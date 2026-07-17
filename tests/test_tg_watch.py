@@ -92,6 +92,15 @@ def test_from_her_reply_kicks_once(tmp_path, kicks):
     assert [k["kind"] for k in kicks] == ["reply"]
 
 
+def test_reply_kick_carries_text(tmp_path, kicks):
+    db = _db(tmp_path)
+    _armed_reply(db)
+    loop = _loop(tmp_path, db, chat_id=999)
+    loop._track(_Bot(), 999, user_id=5, text="miss you")
+    assert [k["kind"] for k in kicks] == ["reply"]
+    assert kicks[0]["text"] == "miss you"
+
+
 def test_other_chat_no_kick(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)

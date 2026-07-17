@@ -17,6 +17,9 @@ poll_interval_s = 5
 # Inline send-call retries per bubble before the row is marked failed.
 # NOT whole-row redelivery: a crash-orphan claimed row is failed, never resent.
 retry_max = 3
+# Her reply text is truncated to this many chars before riding the reply kick
+# into cortex's wakeup note (so cortex sees WHAT she said, not just that she did).
+kick_text_chars = 200
 
 # ── WeChat ────────────────────────────────────────────
 [user]

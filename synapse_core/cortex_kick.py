@@ -56,9 +56,11 @@ def _kick_argv(kick_cmd) -> list[str] | None:
     return argv or None
 
 
-def kick(kick_cmd, kind: str, *, note_id=None, minutes=None) -> bool:
+def kick(kick_cmd, kind: str, *, note_id=None, minutes=None, text=None,
+         text_chars=None) -> bool:
     """Spawn one detached cortex.kick. Returns True if launched. Absent kick_cmd
-    warns once, then no-ops. Never raises."""
+    warns once, then no-ops. Never raises. `text` (her reply) is truncated to
+    `text_chars` and passed as --text so the wakeup note shows WHAT she said."""
     global _warned_no_cmd
     argv = _kick_argv(kick_cmd)
     if argv is None:
@@ -72,6 +74,11 @@ def kick(kick_cmd, kind: str, *, note_id=None, minutes=None) -> bool:
         argv += ["--note-id", str(note_id)]
     if minutes is not None:
         argv += ["--minutes", str(minutes)]
+    if text:
+        t = str(text)
+        if text_chars and text_chars > 0:
+            t = t[:int(text_chars)]
+        argv += ["--text", t]
     try:
         subprocess.Popen(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -129,10 +136,13 @@ def _no_user_reply_since(conn: sqlite3.Connection, channel: str, sent_at: str) -
 
 
 def claim_timeouts(db_path, channel: str, timeout_min_default=None) -> list[dict]:
-    """Poll path: find sent+armed rows on `channel` whose timeout elapsed and the
-    events table confirms no reply, then atomically claim each (armed->fired).
-    Returns [{id, minutes}] for the rows this call won. The per-row single-row
-    UPDATE resolves any race with a concurrent reply claim (one winner)."""
+    """Poll path: find sent+armed rows on `channel` whose timeout elapsed. When
+    the events table confirms no reply, atomically claim (armed->fired) + kick.
+    When she DID reply before the deadline, atomically claim (armed->'satisfied')
+    and do NOT kick — the watch is done, so it is not re-polled every tick.
+    Returns [{id, minutes}] for the fired rows this call won. The per-row
+    single-row UPDATE resolves any race with a concurrent reply claim (one
+    winner)."""
     conn = _connect(db_path)
     if conn is None:
         return []
@@ -148,6 +158,14 @@ def claim_timeouts(db_path, channel: str, timeout_min_default=None) -> list[dict
         ).fetchall()
         for r in rows:
             if not _no_user_reply_since(conn, channel, r["sent_at"]):
+                # She replied before the deadline: retire the watch silently so
+                # this row stops being re-checked on every poll.
+                with conn:
+                    conn.execute(
+                        "UPDATE outbox SET watch_state='satisfied'"
+                        " WHERE id=? AND watch_state='armed'",
+                        (r["id"],),
+                    )
                 continue
             with conn:
                 cur = conn.execute(

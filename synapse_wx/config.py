@@ -78,6 +78,7 @@ class Config:
     # Watch + kick (P6). kick_cmd = cortex.kick launcher (venv python + module).
     # Empty = watch/kick off. Morning flag-pull reads night flag + morning_start.
     outbox_kick_cmd: list | str | None = None
+    outbox_kick_text_chars: int = 200
     cortex_wake_state_file: str = ""
     night_morning_start: str = "06:00"
     timezone: str = "Australia/Melbourne"
@@ -150,6 +151,9 @@ def load_config(path: Path | None = None) -> Config:
             cfg.outbox_kick_cmd = [str(x) for x in kc]
         elif isinstance(kc, str) and kc.strip():
             cfg.outbox_kick_cmd = kc
+        ktc = outbox.get("kick_text_chars")
+        if isinstance(ktc, int) and not isinstance(ktc, bool) and ktc > 0:
+            cfg.outbox_kick_text_chars = ktc
     cortex = data.get("cortex") or {}
     if isinstance(cortex, dict):
         ws = cortex.get("wake_state_file")

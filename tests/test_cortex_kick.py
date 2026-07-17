@@ -128,7 +128,19 @@ def test_timeout_suppressed_when_reply_in_events(tmp_path):
     rid = _sent_watch(db, "tg", timeout_min=10, sent_at=_iso(sent))
     _user_event(db, "tg", _iso(sent + timedelta(minutes=2)))  # she replied
     assert cortex_kick.claim_timeouts(db, "tg") == []
-    assert _state(db, rid) == "armed"           # untouched
+    assert _state(db, rid) == "satisfied"       # retired, not re-polled
+
+
+def test_timeout_satisfied_claimed_once(tmp_path):
+    db = _db(tmp_path)
+    sent = datetime.now(timezone.utc) - timedelta(minutes=30)
+    rid = _sent_watch(db, "tg", timeout_min=10, sent_at=_iso(sent))
+    _user_event(db, "tg", _iso(sent + timedelta(minutes=2)))  # she replied
+    assert cortex_kick.claim_timeouts(db, "tg") == []
+    assert _state(db, rid) == "satisfied"
+    # A satisfied row is no longer armed, so the next poll skips it entirely.
+    assert cortex_kick.claim_timeouts(db, "tg") == []
+    assert _state(db, rid) == "satisfied"
 
 
 def test_timeout_not_yet_elapsed(tmp_path):
@@ -173,6 +185,21 @@ def test_kick_spawns_with_kind_and_ids(monkeypatch):
     assert captured["argv"] == [
         "py", "-m", "cortex.kick", "--kind", "timeout",
         "--note-id", "5", "--minutes", "30"]
+
+
+def test_kick_reply_carries_truncated_text(monkeypatch):
+    captured = {}
+    class _P:
+        def __init__(self, argv, **kw): captured["argv"] = argv
+    monkeypatch.setattr(cortex_kick.subprocess, "Popen", _P)
+    assert cortex_kick.kick(["py", "-m", "cortex.kick"], "reply",
+                            note_id=7, text="x" * 500, text_chars=200)
+    argv = captured["argv"]
+    assert argv[:6] == [
+        "py", "-m", "cortex.kick", "--kind", "reply", "--note-id"]
+    assert "--text" in argv
+    sent_text = argv[argv.index("--text") + 1]
+    assert sent_text == "x" * 200          # truncated to text_chars
 
 
 # ── night flag / morning_start readers ────────────────────────────────────
