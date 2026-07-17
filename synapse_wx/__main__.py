@@ -187,10 +187,8 @@ def main() -> int:
         if ml is not None:
             ml.close_provider()
 
-    mid_cmd = marrow_session.mid_scan_command(cfg.sessionend_command, CHANNEL)
     idle_loop = IdleFireLoop(
         sessions=sessions,
-        mid_sessionend_command=mid_cmd,
         marker_dir=SESSION_MARKER_DIR,
         audit_log=SESSION_AUDIT_LOG,
         channel=CHANNEL,

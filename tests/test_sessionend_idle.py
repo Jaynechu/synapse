@@ -1,11 +1,10 @@
-"""Tests for IdleFireLoop — cross-channel cleanup and mid-session scan trigger."""
+"""Tests for IdleFireLoop — cross-channel handoff cleanup."""
 
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,12 +12,6 @@ from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
 
 HOUR = 3600
-
-
-def _mock_proc(poll_rc: int | None = None) -> MagicMock:
-    m = MagicMock()
-    m.poll.return_value = poll_rc
-    return m
 
 
 class FakeClock:
@@ -60,13 +53,12 @@ def env(tmp_path: Path):
     }
 
 
-def _build_loop(env, clock: FakeClock, mid_command: str = "") -> IdleFireLoop:
+def _build_loop(env, clock: FakeClock) -> IdleFireLoop:
     return IdleFireLoop(
         sessions=env["tracker"],
         marker_dir=env["markers"],
         audit_log=env["audit"],
         channel="wx",
-        mid_sessionend_command=mid_command,
         idle_threshold_sec=6 * HOUR,
         scan_interval_sec=30 * 60,
         cc_projects_dir=env["projects"],
@@ -75,131 +67,17 @@ def _build_loop(env, clock: FakeClock, mid_command: str = "") -> IdleFireLoop:
     )
 
 
-def test_mid_fire_returns_false_when_command_empty(env) -> None:
-    clock = FakeClock()
-    sid = "sid-mid00001"
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
-
-    loop = _build_loop(env, clock)
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
-    ):
-        fired = loop._maybe_mid_fire("u1", sid, clock.now)
-
-    assert fired is False
-    popen.assert_not_called()
-
-
-def test_mid_fire_spawns_for_active_session(env) -> None:
-    clock = FakeClock()
-    sid = "sid-mid00003"
-    jsonl = _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
-
-    loop = IdleFireLoop(
-        sessions=env["tracker"],
-        mid_sessionend_command=(
-            "python -m marrow.mid_scan --sid {sid} --jsonl-path {jsonl} "
-            "--channel {channel}"
-        ),
-        marker_dir=env["markers"],
-        audit_log=env["audit"],
-        channel="wx",
-        idle_threshold_sec=6 * HOUR,
-        scan_interval_sec=30 * 60,
-        cc_projects_dir=env["projects"],
-        clock=clock,
-        sleeper=lambda _s: None,
-    )
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
-    ):
-        fired = loop._maybe_mid_fire("u1", sid, clock.now)
-
-    assert fired is True
-    popen.assert_called_once()
-    args, kwargs = popen.call_args
-    assert args[0] == [
-        "python",
-        "-m",
-        "marrow.mid_scan",
-        "--sid",
-        sid,
-        "--jsonl-path",
-        str(jsonl),
-        "--channel",
-        "wx",
-    ]
-    assert kwargs["stdin"] is subprocess.DEVNULL
-    assert kwargs["stdout"] is subprocess.DEVNULL
-    assert kwargs["stderr"] is subprocess.DEVNULL
-    assert kwargs["close_fds"] is True
-    assert kwargs["start_new_session"] is True
-    assert (env["markers"] / f".mid_fired.{sid}").exists()
-    assert f"kind=mid_scan sid={sid[:8]}" in env["audit"].read_text()
-
-
-def test_mid_fire_marker_rate_limits(env) -> None:
-    clock = FakeClock()
-    sid = "sid-mid00004"
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
-
-    loop = IdleFireLoop(
-        sessions=env["tracker"],
-        mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
-        marker_dir=env["markers"],
-        audit_log=env["audit"],
-        channel="wx",
-        idle_threshold_sec=6 * HOUR,
-        scan_interval_sec=30 * 60,
-        cc_projects_dir=env["projects"],
-        clock=clock,
-        sleeper=lambda _s: None,
-    )
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
-    ):
-        first = loop._maybe_mid_fire("u1", sid, clock.now)
-        clock.advance(60)
-        second = loop._maybe_mid_fire("u1", sid, clock.now)
-
-    assert first is True
-    assert second is False
-    assert popen.call_count == 1
-
-
-def test_tick_once_calls_mid_fire(env) -> None:
+def test_tick_once_checks_cross_channel(env) -> None:
     clock = FakeClock()
     sid = "sid-mid00005"
     env["tracker"].set("u1", sid)
-    loop = _build_loop(env, clock, mid_command="python -m marrow.mid_scan --sid {sid}")
+    loop = _build_loop(env, clock)
 
-    with (
-        patch.object(loop, "_check_cross_channel") as cross,
-        patch.object(loop, "_maybe_mid_fire", return_value=True) as maybe_mid_fire,
-    ):
+    with patch.object(loop, "_check_cross_channel") as cross:
         fired = loop.tick_once()
 
     assert fired == []
     cross.assert_called_once_with("u1", sid)
-    maybe_mid_fire.assert_called_once_with("u1", sid, clock.now)
-
-
-def test_skips_sids_without_jsonl(env) -> None:
-    clock = FakeClock()
-    env["tracker"].set("u1", "sid-no-jsonl")
-
-    loop = _build_loop(env, clock, mid_command="python -m marrow.mid_scan --sid {sid}")
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
-    ):
-        fired = loop.tick_once()
-
-    assert fired == []
-    popen.assert_not_called()
 
 
 def test_forget_removes_from_scan(env) -> None:
@@ -208,12 +86,11 @@ def test_forget_removes_from_scan(env) -> None:
     _make_jsonl(env["projects"], "proj-x", "sid-gggggggg", clock.now - HOUR)
 
     env["tracker"].forget("u1")
-    loop = _build_loop(env, clock, mid_command="python -m marrow.mid_scan --sid {sid}")
-    with patch("synapse_core.sessionend.idle.subprocess.Popen") as popen:
+    loop = _build_loop(env, clock)
+    with patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None):
         fired = loop.tick_once()
 
     assert fired == []
-    popen.assert_not_called()
 
 
 def test_cross_channel_cleanup_forgets_session(env) -> None:

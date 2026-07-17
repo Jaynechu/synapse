@@ -56,7 +56,6 @@ def env(tmp_path: Path):
 def _build_loop(env, clock: FakeClock) -> IdleFireLoop:
     return IdleFireLoop(
         sessions=env["tracker"],
-        mid_sessionend_command="python -m marrow.mid_scan --sid {sid}",
         marker_dir=env["markers"],
         audit_log=env["audit"],
         channel="wx",
@@ -77,26 +76,7 @@ def test_pre_spawn_hook_removed_loop_ticks_without_error(env) -> None:
 
     loop = _build_loop(env, clock)
 
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen"),
+    with patch(
+        "synapse_core.sessionend.idle.session_lock.holder", return_value=None
     ):
         loop.tick_once()
-
-
-def test_loop_mid_fires_without_pre_spawn_hook(env) -> None:
-    """Mid-session scan fires correctly with no pre_spawn_hook parameter."""
-    clock = FakeClock()
-    sid = "sid-b11a0002"
-    env["tracker"].set("u1", sid)
-    _make_jsonl(env["projects"], "proj-x", sid, clock.now - HOUR)
-
-    loop = _build_loop(env, clock)
-
-    with (
-        patch("synapse_core.sessionend.idle.session_lock.holder", return_value=None),
-        patch("synapse_core.sessionend.idle.subprocess.Popen") as popen,
-    ):
-        loop.tick_once()
-
-    popen.assert_called_once()

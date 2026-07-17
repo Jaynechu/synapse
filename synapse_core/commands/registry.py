@@ -139,9 +139,9 @@ class CommandContext:
     close_provider: Callable[[], None]
     forget_session: Callable[[], None]
     # User-initiated sessionend trigger: /clear and /cwd call this with the
-    # old sid BEFORE close+swap so marrow's sessionend_async (LLM pipeline +
-    # affect/digest extraction) runs. cc's SessionEnd hook in bridge
-    # mode skips this popen by design — the bridge owns the timing.
+    # old sid BEFORE close+swap. Events are archived per-turn by cc's Stop
+    # hook, so the bridge no longer drives marrow's retired sessionend
+    # pipeline; this hook stays as a best-effort no-op-safe closure.
     fire_sessionend: Callable[[str], None] = field(
         default_factory=lambda: lambda _sid: None
     )

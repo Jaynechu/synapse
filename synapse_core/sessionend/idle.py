@@ -1,11 +1,8 @@
-"""Idle-fire loop: scan tracked sessions, trigger mid-session scan command."""
+"""Idle-fire loop: scan tracked sessions for cross-channel handoff cleanup."""
 
 from __future__ import annotations
 
 import logging
-import os
-import shlex
-import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -24,11 +21,9 @@ DEFAULT_CC_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 
 class IdleFireLoop:
-    """Background loop: every scan_interval, trigger mid-session scan for active sids.
+    """Background loop: every scan_interval, reconcile tracked sessions.
 
     Cross-channel sessions (held by another channel) are cleaned up on each tick.
-    mid_sessionend_command is spawned as a detached subprocess; rate-limited per
-    scan_interval via a .mid_fired.{sid} marker.
     """
 
     def __init__(
@@ -38,7 +33,6 @@ class IdleFireLoop:
         marker_dir: Path,
         audit_log: Path,
         channel: str,
-        mid_sessionend_command: str = "",
         idle_threshold_sec: int = DEFAULT_IDLE_THRESHOLD_SEC,
         scan_interval_sec: int = DEFAULT_SCAN_INTERVAL_SEC,
         cc_projects_dir: Path = DEFAULT_CC_PROJECTS_DIR,
@@ -47,7 +41,6 @@ class IdleFireLoop:
         claimed_away_hook: Callable[[str], None] | None = None,
     ) -> None:
         self._sessions = sessions
-        self._mid_command = mid_sessionend_command or ""
         self._idle_threshold_sec = idle_threshold_sec
         self._scan_interval_sec = scan_interval_sec
         self._cc_projects_dir = Path(cc_projects_dir)
@@ -91,18 +84,14 @@ class IdleFireLoop:
     # ── core scan ──────────────────────────────────────────────────
 
     def tick_once(self) -> list[str]:
-        """Single scan pass. Returns list of sids fired this tick."""
-        fired: list[str] = []
-        now = self._clock()
+        """Single scan pass. Reconciles cross-channel handoff for each sid."""
         snapshot = self._sessions.snapshot()
         for user_id, sid in snapshot.items():
             try:
                 self._check_cross_channel(user_id, sid)
-                if self._maybe_mid_fire(user_id, sid, now):
-                    pass
             except Exception as e:
                 logger.warning("idle_fire scan failed for sid=%s: %s", sid[:8], e)
-        return fired
+        return []
 
     def _check_cross_channel(self, user_id: str, sid: str) -> None:
         if not sid:
@@ -122,74 +111,7 @@ class IdleFireLoop:
                 pass
             self._sessions.forget(user_id)
 
-    def _maybe_mid_fire(self, user_id: str, sid: str, now: float) -> bool:
-        if not self._mid_command or not sid:
-            return False
-        owner = session_lock.holder(sid)
-        if owner and owner != self._channel:
-            return False
-        jsonl = self._find_jsonl(sid)
-        if jsonl is None:
-            return False
-
-        mid_marker = self._marker_dir / f".mid_fired.{sid}"
-        if (
-            mid_marker.exists()
-            and now - mid_marker.stat().st_mtime < self._scan_interval_sec
-        ):
-            return False
-
-        cmd_str = (
-            self._mid_command
-            .replace("{sid}", sid)
-            .replace("{jsonl}", str(jsonl))
-            .replace("{channel}", self._channel)
-        )
-        argv = shlex.split(cmd_str)
-        if not argv:
-            return False
-        try:
-            subprocess.Popen(  # noqa: S603 - cmd template is operator-supplied config
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-                start_new_session=True,
-            )
-        except (OSError, FileNotFoundError) as e:
-            logger.warning(
-                "Failed to spawn mid-session scan for sid=%s: %s", sid[:8], e
-            )
-            return False
-
-        self._touch_marker(mid_marker)
-        self._audit(f"kind=mid_scan sid={sid[:8]}")
-        return True
-
-    def _find_jsonl(self, sid: str) -> Path | None:
-        if not self._cc_projects_dir.is_dir():
-            return None
-        # sid may live under any project subdir
-        for project_dir in self._cc_projects_dir.iterdir():
-            if not project_dir.is_dir():
-                continue
-            candidate = project_dir / f"{sid}.jsonl"
-            if candidate.is_file():
-                return candidate
-        return None
-
     # ── side effects ───────────────────────────────────────────────
-
-    def _touch_marker(self, marker: Path) -> None:
-        self._marker_dir.mkdir(parents=True, exist_ok=True)
-        marker.touch()
-        # ensure mtime == now even if marker pre-existed
-        ts = self._clock()
-        try:
-            os.utime(marker, (ts, ts))
-        except OSError:
-            pass
 
     def _audit(self, line: str) -> None:
         try:

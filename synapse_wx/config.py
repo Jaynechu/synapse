@@ -18,7 +18,10 @@ DEFAULT_CC_CWD = str(Path.home())
 
 @dataclass
 class Config:
-    sessionend_command: str = "python -m marrow.sessionend_async --sid {sid}"
+    # Retired: marrow archives events per-turn via cc's Stop hook, so the
+    # bridge no longer drives a sessionend LLM pipeline. Empty = _fire_sessionend
+    # no-ops. Left as a config seam for back-compat; no default spawn.
+    sessionend_command: str = ""
     poll_interval_sec: float = 1.0
     # Spacing between outbound reply bubbles. Wider gap avoids tripping the
     # iLink rate limit (ret=-2) on multi-bubble turns.
