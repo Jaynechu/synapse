@@ -674,7 +674,8 @@ class TgLoop:
             await asyncio.sleep(_SEND_GAP_SEC)
         outbox.mark_sent(db, row_id)
 
-    def _track(self, bot: Bot, chat_id: int, user_id: int | None = None) -> None:
+    def _track(self, bot: Bot, chat_id: int, user_id: int | None = None,
+               text: str = "") -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
         if user_id is not None:
@@ -683,8 +684,10 @@ class TgLoop:
                 self._same_sender_interrupted = True
         # P6: inbound from her (chat_id matches the authorized recipient) drives
         # watch-reply + morning flag-pull kicks. Any other chat is ignored here.
+        # `text` = her reply body, threaded into the reply kick so the wakeup
+        # note shows WHAT she said (empty for media-only turns).
         if self._is_from_her(chat_id):
-            self._inbound_from_her()
+            self._inbound_from_her(text)
 
     def _is_from_her(self, chat_id: int | None) -> bool:
         """Net-new sender-identity check: inbound chat_id == the authorized
@@ -695,18 +698,22 @@ class TgLoop:
             and int(chat_id) == int(self._cfg.chat_id)
         )
 
-    def _inbound_from_her(self) -> None:
+    def _inbound_from_her(self, text: str = "") -> None:
         """Her message landed on tg -> claim any armed watches on tg (one kick),
         and morning flag-pull (night flag + past morning_start -> kick). Never
         raises; no-ops without kick_cmd. Reply path claims instantly (no other
-        DB query)."""
+        DB query). `text` = her reply body, attached to the reply kick; a
+        media-only reply (no extractable text) substitutes the config
+        placeholder so the reason line never renders an empty quote."""
         db = self._outbox_db()
         kc = self._cfg.outbox_kick_cmd
+        kick_text = text.strip() if text else self._cfg.outbox_kick_media_placeholder
         try:
             ids = cortex_kick.claim_reply(db, "tg") if db else []
             if ids:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
-                cortex_kick.kick(kc, "reply", note_id=note_id)
+                cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
+                                 text_chars=self._cfg.outbox_kick_text_chars)
             if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
                     cortex_kick.past_morning_start(
                         self._cfg.night_morning_start, self._cfg.timezone):
@@ -721,7 +728,7 @@ class TgLoop:
         if not text:
             return
         uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid)
+        self._track(context.bot, update.message.chat_id, uid, text=text)
 
         action, ack = self._registry.dispatch(text)
         inject = self._registry.pending_rewrite

@@ -118,7 +118,20 @@ def test_tick_from_her_triggers_kick(tmp_path, kicks):
     ilink = FakeILink(msgs=[{"from_wxid": "wxid_her", "text": "hi"}])
     loop, _ = _loop(tmp_path, db, ilink)
     loop.tick()
-    assert any(k["kind"] == "reply" for k in kicks)
+    reply = [k for k in kicks if k["kind"] == "reply"]
+    assert reply
+    assert reply[0]["text"] == "hi"          # extracted text rides the kick
+
+
+def test_media_only_reply_kick_carries_placeholder(tmp_path, kicks):
+    db = _db(tmp_path)
+    _armed_reply(db)
+    ilink = FakeILink(msgs=[{"from_wxid": "wxid_her"}])  # sticker/photo: no text
+    loop, _ = _loop(tmp_path, db, ilink)
+    loop.tick()
+    reply = [k for k in kicks if k["kind"] == "reply"]
+    assert reply
+    assert reply[0]["text"] == "[media]"       # config default placeholder
 
 
 def test_tick_other_sender_no_kick(tmp_path, kicks):

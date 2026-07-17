@@ -404,17 +404,22 @@ class MainLoop:
             and from_wxid == self._cfg.target_wxid
         )
 
-    def _inbound_from_her(self) -> None:
+    def _inbound_from_her(self, text: str = "") -> None:
         """Her message landed on wx -> claim any armed watches on wx (one kick),
         and morning flag-pull (night flag + past morning_start -> kick). Never
-        raises; no-ops without kick_cmd. Reply path claims instantly."""
+        raises; no-ops without kick_cmd. Reply path claims instantly. `text` =
+        her reply body, attached to the reply kick; a media-only reply (no
+        extractable text) substitutes the config placeholder so the reason line
+        never renders an empty quote."""
         db = self._outbox_db()
         kc = self._cfg.outbox_kick_cmd
+        kick_text = text.strip() if text else self._cfg.outbox_kick_media_placeholder
         try:
             ids = cortex_kick.claim_reply(db, "wx") if db else []
             if ids:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
-                cortex_kick.kick(kc, "reply", note_id=note_id)
+                cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
+                                 text_chars=self._cfg.outbox_kick_text_chars)
             if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
                     cortex_kick.past_morning_start(
                         self._cfg.night_morning_start, self._cfg.timezone):
@@ -524,15 +529,16 @@ class MainLoop:
                     self._last_from_wxid = from_wxid
                 if ctx_token:
                     self._last_ctx_token = ctx_token
-            # P6: inbound from her (from_wxid == target) drives watch-reply +
-            # morning flag-pull kicks. Any other sender is ignored here.
-            if self._is_from_her(from_wxid):
-                self._inbound_from_her()
             try:
                 text = self._ilink.extract_text(msg)
             except Exception as e:
                 logger.warning("extract_text failed: %s", e)
                 text = ""
+            # P6: inbound from her (from_wxid == target) drives watch-reply +
+            # morning flag-pull kicks. Any other sender is ignored here. Her
+            # reply text rides the reply kick (extracted above; "" for media).
+            if self._is_from_her(from_wxid):
+                self._inbound_from_her(text)
             # C0: surface media events alongside text so a pure-media bubble
             # (e.g. just a photo, no caption) still triggers a turn.
             media_events: list[dict] = []
