@@ -138,13 +138,6 @@ class CommandContext:
     swap_provider: Callable[[str | None, str | None], None]
     close_provider: Callable[[], None]
     forget_session: Callable[[], None]
-    # User-initiated sessionend trigger: /clear and /cwd call this with the
-    # old sid BEFORE close+swap. Events are archived per-turn by cc's Stop
-    # hook, so the bridge no longer drives marrow's retired sessionend
-    # pipeline; this hook stays as a best-effort no-op-safe closure.
-    fire_sessionend: Callable[[str], None] = field(
-        default_factory=lambda: lambda _sid: None
-    )
     # B10: status accessors. Each returns the current value or None when
     # unavailable. Defaults give sensible no-data values so test stubs work.
     get_status: Callable[[], dict] = field(default_factory=lambda: lambda: {})
@@ -444,8 +437,8 @@ class Registry:
         # effort_level and thinking_on persist across /clear — user prefs
         # stick, only model resets (0614).
         default_model = self._ctx.clear_default_model or state.model
-        # Close cc FIRST so SessionEnd hook archives events into DB, then
-        # spawn sessionend_async — it needs the archived events (user_count).
+        # Close cc so the SessionEnd hook archives events into the DB. Events
+        # also land per-turn via cc's Stop hook.
         old_sid = state.session_id
         if old_sid:
             try:
@@ -453,10 +446,6 @@ class Registry:
             except Exception:
                 pass
             self._ctx.close_provider()
-            try:
-                self._ctx.fire_sessionend(old_sid)
-            except Exception:  # noqa: BLE001 — never block /clear
-                pass
             if self._ctx.channel:
                 session_lock.release(old_sid, self._ctx.channel)
         self._ctx.forget_session()
@@ -496,7 +485,7 @@ class Registry:
     def _resume_sid(self, sid: str) -> str:
         state = self._ctx.state
         # If this bridge has a different active session, clear it first.
-        # Close cc before fire_sessionend so events are archived.
+        # Close cc so its SessionEnd hook archives events.
         old_sid = state.session_id
         if old_sid and old_sid != sid:
             try:
@@ -504,20 +493,9 @@ class Registry:
             except Exception:
                 pass
             self._ctx.close_provider()
-            try:
-                self._ctx.fire_sessionend(old_sid)
-            except Exception:
-                pass
             if self._ctx.channel:
                 session_lock.release(old_sid, self._ctx.channel)
             self._ctx.forget_session()
-        # If target sid is held by another channel, fire its sessionend.
-        holder = session_lock.holder(sid)
-        if holder and holder != (self._ctx.channel or ""):
-            try:
-                self._ctx.fire_sessionend(sid)
-            except Exception:
-                pass
         resolved = self._ctx.resolve_resume_model(sid)
         if resolved:
             branch = "resolved"
@@ -804,14 +782,10 @@ class Registry:
         # so the new session starts clean. effort_level + thinking_on
         # persist (0614).
         default_model = self._ctx.clear_default_model or state.model
-        # Close cc before fire_sessionend so events are archived first.
+        # Close cc so its SessionEnd hook archives events first.
         old_sid = state.session_id
         if old_sid:
             self._ctx.close_provider()
-            try:
-                self._ctx.fire_sessionend(old_sid)
-            except Exception:  # noqa: BLE001 — never block /cwd
-                pass
         self._ctx.swap_provider(default_model, None)
         self._ctx.forget_session()
         state.session_id = None

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shlex
 import signal
 import time
 import subprocess
@@ -71,7 +70,6 @@ LAST_ACTIVE_PATH = Path.home() / ".config" / "marrow" / "last_active.json"
 SESSION_STATE_PATH = CONFIG_DIR / "sessions.json"
 SESSION_MARKER_DIR = CONFIG_DIR / "markers"
 SESSION_AUDIT_LOG = CONFIG_DIR / "session_audit.log"
-SESSIONEND_ERR_LOG = LOG_DIR / "synapse-wx-sessionend.err.log"
 CC_STDERR_LOG = LOG_DIR / "synapse-wx-cc-stderr.log"
 
 
@@ -286,32 +284,6 @@ def main() -> int:
                 logger.warning("replay bubble send failed: %s", e)
                 break
 
-    def _fire_sessionend(sid: str) -> None:
-        """User-initiated sessionend popen (/clear, /cwd).
-
-        Same command template as IdleFireLoop but no marker/retry bookkeeping
-        — one-shot user actions don't need fire-once guards. cc's SessionEnd
-        hook in bridge mode skips its own popen by design (bridge_owns marker),
-        so without this the sid never reaches marrow's LLM pipeline.
-        """
-        if not sid or not cfg.sessionend_command:
-            return
-        cmd_str = cfg.sessionend_command.replace("{sid}", sid)
-        argv = shlex.split(cmd_str)
-        if not argv:
-            return
-        try:
-            subprocess.Popen(  # noqa: S603 - cmd template is operator-supplied config
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=open(SESSIONEND_ERR_LOG, "ab"),  # noqa: SIM115
-                close_fds=True,
-                start_new_session=True,
-            )
-        except (OSError, FileNotFoundError) as e:
-            logger.warning("fire_sessionend spawn failed sid=%s: %s", sid[:8], e)
-
     usage_client = UsageClient()
     _MARROW_PY = os.environ.get(
         "MARROW_PYTHON",
@@ -363,7 +335,6 @@ def main() -> int:
         swap_provider=main_loop.swap_provider,
         close_provider=main_loop.close_provider,
         forget_session=main_loop.forget_session,
-        fire_sessionend=_fire_sessionend,
         get_status=main_loop.get_status,
         resolve_resume_model=lambda sid: marrow_session.resolve_resume_model(
             cfg.session_get_model_command, cfg.cc_projects_dir, sid

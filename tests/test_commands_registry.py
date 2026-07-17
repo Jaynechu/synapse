@@ -14,7 +14,6 @@ class FakeHooks:
         self.swap_calls: list[tuple[str | None, str | None]] = []
         self.close_calls: int = 0
         self.forget_calls: int = 0
-        self.fire_sessionend_calls: list[str] = []
 
     def swap(self, model: str | None, sid: str | None) -> None:
         self.swap_calls.append((model, sid))
@@ -24,9 +23,6 @@ class FakeHooks:
 
     def forget(self) -> None:
         self.forget_calls += 1
-
-    def fire_sessionend(self, sid: str) -> None:
-        self.fire_sessionend_calls.append(sid)
 
 
 def _make(
@@ -44,7 +40,6 @@ def _make(
         swap_provider=hooks.swap,
         close_provider=hooks.close,
         forget_session=hooks.forget,
-        fire_sessionend=hooks.fire_sessionend,
         **kwargs,
     )
     return Registry(ctx), hooks, s
@@ -241,41 +236,14 @@ def test_clear_keeps_effort_and_thinking() -> None:
     assert s.thinking_on is True
 
 
-def test_clear_fires_sessionend_for_old_sid() -> None:
-    """/clear must popen sessionend_async for the old sid BEFORE swap so the
-    sid actually runs through marrow's LLM pipeline. Without this the wx sid
-    stays orphaned (no lifecycle:end, no affect, no digest)."""
+def test_clear_closes_old_sid() -> None:
+    """/clear closes the old provider (cc's SessionEnd hook archives events)
+    then swaps to a fresh session."""
     s = BridgeState(model="claude-opus-4-7", session_id="sid-old-123")
     reg, hooks, _ = _make(s)
-    reg.dispatch("/clear")
-    assert hooks.fire_sessionend_calls == ["sid-old-123"]
-
-
-def test_clear_no_fire_when_no_old_sid() -> None:
-    """First /clear (or back-to-back /clear) has no sid to retire — skip."""
-    s = BridgeState(model="claude-opus-4-7", session_id=None)
-    reg, hooks, _ = _make(s)
-    reg.dispatch("/clear")
-    assert hooks.fire_sessionend_calls == []
-
-
-def test_clear_fire_failure_does_not_block() -> None:
-    """fire_sessionend exception must not prevent the rest of /clear."""
-    s = BridgeState(model="claude-opus-4-7", session_id="sid-boom")
-    hooks = FakeHooks()
-
-    def boom(_sid: str) -> None:
-        raise RuntimeError("popen failed")
-
-    ctx = CommandContext(
-        state=s,
-        swap_provider=hooks.swap,
-        close_provider=hooks.close,
-        forget_session=hooks.forget,
-        fire_sessionend=boom,
-    )
-    verdict, _ = Registry(ctx).dispatch("/clear")
+    verdict, _ = reg.dispatch("/clear")
     assert verdict == "handled"
+    assert hooks.close_calls == 1
     assert hooks.swap_calls == [("claude-opus-4-6[1m]", None)]
     assert s.session_id is None
 
@@ -551,7 +519,7 @@ def test_cwd_preset_digit_switches_and_clears(tmp_path, monkeypatch) -> None:
     assert s.thinking_on is True
     assert hooks.swap_calls == [("claude-opus-4-6[1m]", None)]
     assert hooks.forget_calls == 1
-    assert hooks.fire_sessionend_calls == ["old-sid"]
+    assert hooks.close_calls == 1
     assert persisted  # persist_state fired at least once
 
 

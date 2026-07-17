@@ -18,10 +18,6 @@ DEFAULT_CC_CWD = str(Path.home())
 
 @dataclass
 class Config:
-    # Retired: marrow archives events per-turn via cc's Stop hook, so the
-    # bridge no longer drives a sessionend LLM pipeline. Empty = _fire_sessionend
-    # no-ops. Left as a config seam for back-compat; no default spawn.
-    sessionend_command: str = ""
     poll_interval_sec: float = 1.0
     # Spacing between outbound reply bubbles. Wider gap avoids tripping the
     # iLink rate limit (ret=-2) on multi-bubble turns.
@@ -104,11 +100,6 @@ def load_config(path: Path | None = None) -> Config:
         logger.warning("config load failed (%s); using defaults", e)
         return Config()
     cfg = Config()
-    session = data.get("session") or {}
-    if isinstance(session, dict) and "sessionend_command" in session:
-        val = session["sessionend_command"]
-        if isinstance(val, str):
-            cfg.sessionend_command = val
     loop = data.get("loop") or {}
     if isinstance(loop, dict) and "poll_interval_sec" in loop:
         val = loop["poll_interval_sec"]
@@ -191,6 +182,7 @@ def load_config(path: Path | None = None) -> Config:
         cap = provider.get("turn_output_cap")
         if isinstance(cap, int) and not isinstance(cap, bool):
             cfg.turn_output_cap = cap
+    session = data.get("session") or {}
     if isinstance(session, dict):
         for field_name in (
             "session_record_command",

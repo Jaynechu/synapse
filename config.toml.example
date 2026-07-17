@@ -72,9 +72,6 @@ assistant_name = ""
 [marrow]
 # Only needed if marrow_bridge = true
 db = "~/.config/marrow/marrow.db"
-sessionend_command = ""
-# Template: "{venv}/python -m marrow.sessionend_async --sid {sid}"
-# {venv} = path to your marrow .venv/bin, {sid} = replaced at runtime
 
 [cwd_presets]
 # Named shortcuts for /cwd N command. Map number to absolute path.

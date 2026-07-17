@@ -32,7 +32,6 @@ class TgConfig:
     assistant_name: str = "assistant"
 
     # Session lifecycle
-    sessionend_command: str = ""
     cc_projects_dir: str = "~/.claude/projects"
 
     # Marrow integration (all empty = marrow disabled)
@@ -168,8 +167,6 @@ def load_config(path: Path | None = None) -> TgConfig:
     if isinstance(marrow, dict):
         if isinstance(marrow.get("db"), str):
             cfg.marrow_db = marrow["db"]
-        if isinstance(marrow.get("sessionend_command"), str):
-            cfg.sessionend_command = marrow["sessionend_command"]
         if isinstance(marrow.get("session_record_command"), str):
             cfg.session_record_command = marrow["session_record_command"]
         if isinstance(marrow.get("session_get_model_command"), str):
