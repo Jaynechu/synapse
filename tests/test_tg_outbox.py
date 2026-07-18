@@ -270,6 +270,18 @@ def test_empty_note_prefix_disables(tmp_path):
     assert _row(db, rid)["status"] == "sent"
 
 
+def test_note_prefix_not_duplicated_when_already_present(tmp_path):
+    db = _db(tmp_path)
+    rid = _insert(db, "\U0001f4ee already prefixed")
+    loop = _loop(tmp_path, db)
+    bot = FakeBot()
+
+    asyncio.run(loop.outbox_poll(_Ctx(bot)))
+
+    assert [m["text"] for m in bot.sent] == ["\U0001f4ee already prefixed"]
+    assert _row(db, rid)["status"] == "sent"
+
+
 # --- multi-bubble body ----------------------------------------------------
 
 def test_long_body_split_into_bubbles(tmp_path):

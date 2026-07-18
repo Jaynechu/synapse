@@ -640,7 +640,8 @@ class TgLoop:
         chat_id = self._cfg.chat_id
         prefix = self._cfg.outbox_note_prefix
         for row in rows:
-            body = prefix + (row["body"] or "") if prefix else (row["body"] or "")
+            raw = row["body"] or ""
+            body = prefix + raw if prefix and not raw.startswith(prefix) else raw
             await self._deliver_outbox_row(bot, chat_id, row["id"], body)
 
     async def _deliver_outbox_row(

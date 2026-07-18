@@ -470,7 +470,8 @@ class MainLoop:
         rows = outbox.claim_pending(db)
         prefix = self._cfg.outbox_note_prefix
         for row in rows:
-            body = prefix + (row["body"] or "") if prefix else (row["body"] or "")
+            raw = row["body"] or ""
+            body = prefix + raw if prefix and not raw.startswith(prefix) else raw
             self._deliver_outbox_row(row["id"], body)
 
     def _deliver_outbox_row(self, row_id: int, body: str) -> None:

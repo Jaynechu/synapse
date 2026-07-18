@@ -343,6 +343,18 @@ def test_empty_note_prefix_disables(tmp_path):
     assert _row(db, rid)["status"] == "sent"
 
 
+def test_note_prefix_not_duplicated_when_already_present(tmp_path):
+    db = _db(tmp_path)
+    rid = _insert(db, "\U0001f4ee already prefixed")
+    ilink = FakeILink()
+    loop, _ = _loop(tmp_path, db, ilink)
+
+    loop._outbox_scan()
+
+    assert ilink.sent == [("wxid_her", "", "\U0001f4ee already prefixed")]
+    assert _row(db, rid)["status"] == "sent"
+
+
 class ChunkingILink(FakeILink):
     """Mirrors ilink.client.send_text: splits at max_len like the real client,
     recording each chunk as a separate send call."""
