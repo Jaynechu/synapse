@@ -49,6 +49,12 @@ send_retry_max = 2
 # (tg) If Telegram's RetryAfter exceeds this many seconds, skip the wait and
 # treat the send as failed instead of stalling the bridge.
 retry_after_cap_sec = 60.0
+# (tg) HTTPX transport timeouts (seconds) for the Telegram Bot. read timeout
+# must stay above the long-poll timeout (10s) so a poll never times out early.
+http_connect_timeout_s = 10.0
+http_read_timeout_s = 30.0
+http_write_timeout_s = 30.0
+http_pool_timeout_s = 10.0
 
 # ── Shared ────────────────────────────────────────────
 [provider]

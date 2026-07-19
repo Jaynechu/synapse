@@ -90,7 +90,7 @@ def test_from_her_reply_kicks_once(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5)
+    loop._track(_Bot(), 999)
     assert [k["kind"] for k in kicks] == ["reply"]
 
 
@@ -98,7 +98,7 @@ def test_reply_kick_carries_text(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5, text="miss you")
+    loop._track(_Bot(), 999, text="miss you")
     assert [k["kind"] for k in kicks] == ["reply"]
     assert kicks[0]["text"] == "miss you"
 
@@ -107,7 +107,7 @@ def test_media_only_reply_kick_carries_placeholder(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5)          # no text = sticker/photo turn
+    loop._track(_Bot(), 999)          # no text = sticker/photo turn
     assert [k["kind"] for k in kicks] == ["reply"]
     assert kicks[0]["text"] == "[media]"         # config default placeholder
 
@@ -122,7 +122,7 @@ def test_inbound_stamps_receipt_even_without_watch(tmp_path, kicks):
     rid = cur.lastrowid
     conn.close()
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5, text="hey")
+    loop._track(_Bot(), 999, text="hey")
     conn = sqlite3.connect(db)
     row = conn.execute(
         "SELECT replied_at, reply_text FROM outbox WHERE id=?", (rid,)).fetchone()
@@ -145,7 +145,7 @@ def test_same_batch_old_inbound_does_not_stamp_new_note(tmp_path, kicks):
     conn.close()
     loop = _loop(tmp_path, db, chat_id=999)
     her_older_msg_date = datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
-    loop._track(_Bot(), 999, user_id=5, text="hey", msg_date=her_older_msg_date)
+    loop._track(_Bot(), 999, text="hey", msg_date=her_older_msg_date)
     conn = sqlite3.connect(db)
     row = conn.execute(
         "SELECT replied_at, reply_text FROM outbox WHERE id=?", (note_id,)).fetchone()
@@ -165,7 +165,7 @@ def test_genuine_later_reply_stamps_note(tmp_path, kicks):
     conn.close()
     loop = _loop(tmp_path, db, chat_id=999)
     her_later_msg_date = datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc)
-    loop._track(_Bot(), 999, user_id=5, text="got it love", msg_date=her_later_msg_date)
+    loop._track(_Bot(), 999, text="got it love", msg_date=her_later_msg_date)
     conn = sqlite3.connect(db)
     row = conn.execute(
         "SELECT replied_at, reply_text FROM outbox WHERE id=?", (note_id,)).fetchone()
@@ -178,7 +178,7 @@ def test_captioned_photo_receipt_carries_caption(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5, text="look at this",
+    loop._track(_Bot(), 999, text="look at this",
                 msg_date=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
                 media_type="photo")
     assert kicks[0]["text"] == "[photo] look at this"
@@ -188,7 +188,7 @@ def test_uncaptioned_photo_receipt_carries_bare_tag(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5,
+    loop._track(_Bot(), 999,
                 msg_date=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
                 media_type="photo")
     assert kicks[0]["text"] == "[photo]"
@@ -198,14 +198,14 @@ def test_other_chat_no_kick(tmp_path, kicks):
     db = _db(tmp_path)
     _armed_reply(db)
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 1234, user_id=5)          # not her chat
+    loop._track(_Bot(), 1234)          # not her chat
     assert kicks == []
 
 
 def test_from_her_no_armed_no_kick(tmp_path, kicks):
     db = _db(tmp_path)                             # no armed watch
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999, user_id=5)
+    loop._track(_Bot(), 999)
     assert kicks == []
 
 
@@ -214,7 +214,7 @@ def test_morning_kick_when_night_and_past_start(tmp_path, kicks):
     ws = tmp_path / "wake_state.json"
     ws.write_text(json.dumps({"mode": "night"}))
     loop = _loop(tmp_path, db, chat_id=999, wake_state_file=str(ws), morning="00:00")
-    loop._track(_Bot(), 999, user_id=5)
+    loop._track(_Bot(), 999)
     assert [k["kind"] for k in kicks] == ["morning"]
 
 
@@ -223,7 +223,7 @@ def test_no_morning_kick_when_flag_absent(tmp_path, kicks):
     ws = tmp_path / "wake_state.json"
     ws.write_text(json.dumps({"awake": True}))    # day, no night flag
     loop = _loop(tmp_path, db, chat_id=999, wake_state_file=str(ws), morning="00:00")
-    loop._track(_Bot(), 999, user_id=5)
+    loop._track(_Bot(), 999)
     assert kicks == []
 
 

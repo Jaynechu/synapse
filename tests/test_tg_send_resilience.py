@@ -231,7 +231,7 @@ def test_check_flush_send_failure_stops_bubbles_and_alerts(tmp_path, monkeypatch
     loop._provider = type("P", (), {"session_id": None, "send": lambda self, b: None})()
 
     async def fake_stream(bot, chat_id, typing):
-        return "bubble one\n\nbubble two\n\nbubble three", "", None
+        return "bubble one\n\nbubble two\n\nbubble three", ""
 
     monkeypatch.setattr(loop, "_stream_response", fake_stream)
     monkeypatch.setattr("synapse_tg.loop.asyncio.to_thread", _immediate)
@@ -271,141 +271,45 @@ class _FakeClock:
         return self.now
 
 
-# --- stream final-edit handoff --------------------------------------------
+# --- always-deliver: mid-turn inbound never merges/drops the reply --------
 
-def _stream_check_flush_loop(tmp_path, monkeypatch, bot, alerts=None):
-    """Drive check_flush with a streaming stream_msg_id set, three text bubbles."""
+def test_reply_always_ships_midturn_inbound_stays_buffered(tmp_path, monkeypatch):
+    """New inbound arriving while cc produces the reply must NOT merge or drop
+    the reply. The reply text ships unchanged; the mid-turn message survives in
+    the buffer for the next turn."""
     clock = _FakeClock()
-    loop = _loop(tmp_path, alerts=alerts)
+    loop = _loop(tmp_path)
     loop._buffer = InboundBuffer(clock=clock)
-    loop._buffer.add("hello")
-    clock.now += 60.0
+    loop._buffer.add("original message")
+    clock.now += 60.0  # past debounce quiet window
     loop._pending_chat_id = 123
+    bot = FakeBot()
     loop._bot = bot
 
     monkeypatch.setattr(loop, "ensure_provider", lambda: None)
     loop._provider = type("P", (), {"session_id": None, "send": lambda self, b: None})()
 
     async def fake_stream(bot_, chat_id, typing):
-        return "bubble one\n\nbubble two\n\nbubble three", "", 999  # stream_msg_id=999
+        # Simulate a new message landing while the reply is being produced.
+        loop._buffer.add("new bubble mid-turn")
+        return "the reply", ""
 
     monkeypatch.setattr(loop, "_stream_response", fake_stream)
     monkeypatch.setattr("synapse_tg.loop.asyncio.to_thread", _immediate)
     monkeypatch.setattr(
         "synapse_tg.loop.split_for_tg_typed",
-        lambda text: [
-            {"kind": "text", "text": "bubble one"},
-            {"kind": "text", "text": "bubble two"},
-            {"kind": "text", "text": "bubble three"},
-        ],
-    )
-    return loop
-
-
-class EditFailBot(FakeBot):
-    """Both HTML and plain-text final edits fail; normal sends succeed."""
-
-    async def edit_message_text(self, **kwargs):
-        raise RuntimeError("message to edit not found")
-
-
-def test_stream_final_edit_failure_resends_bubble_zero_as_new_message(tmp_path, monkeypatch, caplog):
-    bot = EditFailBot()
-    loop = _stream_check_flush_loop(tmp_path, monkeypatch, bot)
-
-    class Ctx:
-        pass
-
-    Ctx.bot = bot
-
-    with caplog.at_level("WARNING", logger="synapse_tg.loop"):
-        asyncio.run(loop.check_flush(Ctx()))
-
-    # bubble 0 was sent as a fresh message (not silently dropped), remaining
-    # bubbles proceed in order.
-    assert [m["text"] for m in bot.sent] == [
-        "bubble one",  # gfm_to_tg_html passthrough for plain text
-        "bubble two",
-        "bubble three",
-    ]
-    assert any(
-        "stream final edit failed" in r.message for r in caplog.records
+        lambda text: [{"kind": "text", "text": text}],
     )
 
-
-class EditOkBot(FakeBot):
-    def __init__(self) -> None:
-        super().__init__()
-        self.edits: list[dict] = []
-
-    async def edit_message_text(self, **kwargs):
-        self.edits.append(kwargs)
-        return type("M", (), {"message_id": kwargs.get("message_id")})()
-
-
-def test_stream_final_edit_success_skips_bubble_zero_unchanged(tmp_path, monkeypatch):
-    bot = EditOkBot()
-    loop = _stream_check_flush_loop(tmp_path, monkeypatch, bot)
-
     class Ctx:
-        pass
+        bot = None
 
     Ctx.bot = bot
 
     asyncio.run(loop.check_flush(Ctx()))
 
-    # Preview edited once (HTML path succeeds), bubble 0 NOT re-sent as a new message.
-    assert len(bot.edits) == 1
-    assert [m["text"] for m in bot.sent] == ["bubble two", "bubble three"]
-
-
-class NotModifiedBothBot(FakeBot):
-    """Both HTML and plain-text final edits fail with 'message is not modified'
-    (preview already matches bubble 0 — content was already delivered)."""
-
-    async def edit_message_text(self, **kwargs):
-        raise RuntimeError("Message is not modified")
-
-
-def test_stream_final_edit_not_modified_both_does_not_resend_bubble_zero(tmp_path, monkeypatch):
-    bot = NotModifiedBothBot()
-    loop = _stream_check_flush_loop(tmp_path, monkeypatch, bot)
-
-    class Ctx:
-        pass
-
-    Ctx.bot = bot
-
-    asyncio.run(loop.check_flush(Ctx()))
-
-    # bubble 0 already delivered via the streamed preview — must NOT be re-sent.
-    assert [m["text"] for m in bot.sent] == ["bubble two", "bubble three"]
-
-
-class NotModifiedHtmlOnlyBot(FakeBot):
-    """HTML final edit fails with 'message is not modified'; plain-text retry
-    must be skipped entirely (no second edit call)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.edit_calls = 0
-
-    async def edit_message_text(self, **kwargs):
-        self.edit_calls += 1
-        raise RuntimeError("Message is not modified")
-
-
-def test_stream_final_edit_not_modified_html_skips_plain_retry(tmp_path, monkeypatch):
-    bot = NotModifiedHtmlOnlyBot()
-    loop = _stream_check_flush_loop(tmp_path, monkeypatch, bot)
-
-    class Ctx:
-        pass
-
-    Ctx.bot = bot
-
-    asyncio.run(loop.check_flush(Ctx()))
-
-    # Only the HTML edit attempt runs — no fallthrough to a plain-text retry.
-    assert bot.edit_calls == 1
-    assert [m["text"] for m in bot.sent] == ["bubble two", "bubble three"]
+    # Reply shipped unchanged despite the mid-turn inbound.
+    assert [m["text"] for m in bot.sent] == ["the reply"]
+    # The mid-turn message survives untouched for the next turn (no merge note).
+    clock.now += 60.0
+    assert loop._buffer.flush() == "new bubble mid-turn"

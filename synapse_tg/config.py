@@ -47,6 +47,13 @@ class TgConfig:
     send_retry_max: int = 2
     retry_after_cap_sec: float = 60.0
 
+    # HTTPX transport timeouts (seconds) for the PTB Bot. get_updates uses a
+    # separate request whose read timeout must stay above the long-poll timeout.
+    http_connect_timeout_s: float = 10.0
+    http_read_timeout_s: float = 30.0
+    http_write_timeout_s: float = 30.0
+    http_pool_timeout_s: float = 10.0
+
     # Outbox (cross-channel note delivery). Feature no-ops without chat_id.
     chat_id: int | None = None
     outbox_poll_interval_s: float = 5.0
@@ -191,6 +198,15 @@ def load_config(path: Path | None = None) -> TgConfig:
             cfg.send_retry_max = send["send_retry_max"]
         if isinstance(send.get("retry_after_cap_sec"), (int, float)) and not isinstance(send.get("retry_after_cap_sec"), bool):
             cfg.retry_after_cap_sec = float(send["retry_after_cap_sec"])
+        for key, attr in (
+            ("http_connect_timeout_s", "http_connect_timeout_s"),
+            ("http_read_timeout_s", "http_read_timeout_s"),
+            ("http_write_timeout_s", "http_write_timeout_s"),
+            ("http_pool_timeout_s", "http_pool_timeout_s"),
+        ):
+            v = send.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                setattr(cfg, attr, float(v))
 
     if isinstance(provider.get("cc_projects_dir"), str):
         cfg.cc_projects_dir = provider["cc_projects_dir"]

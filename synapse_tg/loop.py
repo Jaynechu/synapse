@@ -11,7 +11,6 @@ import queue
 import re
 import subprocess
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -51,23 +50,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MERGE_NOTE = (
-    "[bridge: your previous reply was dropped — new messages arrived "
-    "mid-turn. Answer the full merged message below.]"
-)
-
 _SEND_GAP_SEC = 0.05
 _MAX_CONSECUTIVE_DEATHS = 3
 _FLUSH_INTERVAL_SEC = 0.5
 # Extra seconds added on top of a 429 RetryAfter before retrying the send.
 _RETRY_AFTER_MARGIN_SEC = 0.5
-
-# Streaming config
-_STREAM_EDIT_INTERVAL = 1.0   # seconds between intermediate edits
-_STREAM_EDIT_CHARS = 200      # or every N new chars, whichever comes first
-
-# Strip media tags from streaming preview — handled after completion
-_MEDIA_TAG_RE = re.compile(r'<(image|gif|video|file)\s+path="[^"]*"\s*/?>', re.IGNORECASE)
 
 
 TG_BUBBLE_FORMAT_PROMPT = (
@@ -130,9 +117,6 @@ class TgLoop:
         self._state = self._load_state()
         self._registry = self._build_registry()
         self._queued_extra_bubbles: list[str] = []
-        self._pending_user_id: int | None = None
-        self._turn_user_id: int | None = None
-        self._same_sender_interrupted = False
         self._session_created_at: str | None = None
         if self._state.session_id:
             self._session_created_at = get_session_created_at(
@@ -343,10 +327,10 @@ class TgLoop:
     async def _stream_response(
         self, bot: Bot, chat_id: int, typing: TypingAction
     ) -> tuple[str, str]:
-        """Stream provider response live via edit_message_text.
+        """Drain the provider response to completion.
 
-        Returns (full_text, thinking) after completion.
-        Typing action is stopped once the first message is sent.
+        Returns (full_text, thinking). Typing runs for the whole turn; bubbles
+        are sent by the caller after this returns.
         """
         assert self._provider is not None
 
@@ -360,27 +344,6 @@ class TgLoop:
 
         text_chunks: list[str] = []
         thinking_chunks: list[str] = []
-        stream_msg_id: int | None = None
-        accumulated = ""        # preview text accumulated so far
-        preview_frozen = False  # stop updating preview after first \n\n
-        last_edit_time = 0.0
-        chars_since_edit = 0
-
-        async def _do_edit(text: str) -> None:
-            nonlocal last_edit_time, chars_since_edit
-            if stream_msg_id is None or not text:
-                return
-            try:
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=stream_msg_id,
-                    text=text,
-                )
-                last_edit_time = time.monotonic()
-                chars_since_edit = 0
-            except Exception:
-                # Unchanged text or rate-limit — skip silently
-                pass
 
         loop = asyncio.get_event_loop()
 
@@ -428,35 +391,6 @@ class TgLoop:
                         chunk = block.get("text", "")
                         if chunk:
                             text_chunks.append(chunk)
-                            if not preview_frozen:
-                                preview_chunk = _MEDIA_TAG_RE.sub("", chunk)
-                                if preview_chunk:
-                                    accumulated += preview_chunk
-                                    # Freeze preview at first bubble boundary
-                                    if "\n\n" in accumulated:
-                                        accumulated = accumulated.split("\n\n", 1)[0]
-                                        preview_frozen = True
-                                    chars_since_edit += len(preview_chunk)
-
-                                    if not accumulated.strip():
-                                        continue
-
-                                    if stream_msg_id is None:
-                                        typing.stop()
-                                        sent = await bot.send_message(
-                                            chat_id=chat_id, text=accumulated
-                                        )
-                                        stream_msg_id = sent.message_id
-                                        last_edit_time = time.monotonic()
-                                        chars_since_edit = 0
-                                    else:
-                                        now = time.monotonic()
-                                        if (
-                                            now - last_edit_time >= _STREAM_EDIT_INTERVAL
-                                            or chars_since_edit >= _STREAM_EDIT_CHARS
-                                        ):
-                                            await _do_edit(accumulated)
-
                     elif bt == "tool_use":
                         if not typing.running:
                             typing.start()
@@ -480,7 +414,7 @@ class TgLoop:
         full_text = "\n\n".join(text_chunks)
         thinking = "\n".join(thinking_chunks)
 
-        return full_text, thinking, stream_msg_id
+        return full_text, thinking
 
     def _merge_usage(self, usage: dict[str, Any]) -> None:
         for k, v in usage.items():
@@ -676,16 +610,13 @@ class TgLoop:
                 return
             await asyncio.sleep(_SEND_GAP_SEC)
         outbox.mark_sent(db, row_id)
+        logger.info("outbox row #%d delivered", row_id)
 
-    def _track(self, bot: Bot, chat_id: int, user_id: int | None = None,
+    def _track(self, bot: Bot, chat_id: int,
                text: str = "", msg_date: datetime | None = None,
                media_type: str = "") -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
-        if user_id is not None:
-            self._pending_user_id = user_id
-            if self._turn_user_id is not None and user_id == self._turn_user_id:
-                self._same_sender_interrupted = True
         # P6: inbound from her (chat_id matches the authorized recipient) drives
         # watch-reply + morning flag-pull kicks. Any other chat is ignored here.
         # `text` = her reply body, threaded into the reply kick so the wakeup
@@ -751,8 +682,7 @@ class TgLoop:
         text = update.message.text.strip()
         if not text:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid, text=text,
+        self._track(context.bot, update.message.chat_id, text=text,
                      msg_date=update.message.date)
 
         action, ack = self._registry.dispatch(text)
@@ -779,7 +709,7 @@ class TgLoop:
             quoted = reply.text[:80]
             quote_prefix = f'[quoting: "{quoted}"]\n'
         self._buffer.add(f"{quote_prefix}{text}" if quote_prefix else text)
-        logger.debug("buffered text: %r (len=%d)", text[:80], len(self._buffer))
+        logger.info("inbound: %r (len=%d)", text[:60], len(text))
         if update.message:
             self._msg_id_cache[update.message.message_id] = text
             if len(self._msg_id_cache) > 50:
@@ -788,8 +718,7 @@ class TgLoop:
     async def on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.photo:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid,
+        self._track(context.bot, update.message.chat_id,
                      text=update.message.caption or "",
                      msg_date=update.message.date, media_type="photo")
         paths = await materialize_photo(context.bot, update.message, self._cfg.data_dir)
@@ -803,8 +732,7 @@ class TgLoop:
     async def on_animation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.animation:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid,
+        self._track(context.bot, update.message.chat_id,
                      text=update.message.caption or "",
                      msg_date=update.message.date, media_type="animation")
         path = await materialize_animation(context.bot, update.message, self._cfg.data_dir)
@@ -818,8 +746,7 @@ class TgLoop:
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.document:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid,
+        self._track(context.bot, update.message.chat_id,
                      text=update.message.caption or "",
                      msg_date=update.message.date, media_type="document")
         path = await materialize_document(context.bot, update.message, self._cfg.data_dir)
@@ -833,8 +760,7 @@ class TgLoop:
     async def on_sticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.sticker:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid,
+        self._track(context.bot, update.message.chat_id,
                      msg_date=update.message.date, media_type="sticker")
         path = await materialize_sticker(context.bot, update.message, self._cfg.data_dir)
         if path:
@@ -847,8 +773,7 @@ class TgLoop:
     async def on_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.video:
             return
-        uid = update.message.from_user.id if update.message.from_user else None
-        self._track(context.bot, update.message.chat_id, uid,
+        self._track(context.bot, update.message.chat_id,
                      text=update.message.caption or "",
                      msg_date=update.message.date, media_type="video")
         path = await materialize_video(context.bot, update.message, self._cfg.data_dir)
@@ -894,14 +819,11 @@ class TgLoop:
             return
         bot = self._bot or context.bot
         chat_id = self._pending_chat_id
-        self._turn_user_id = self._pending_user_id
-        self._same_sender_interrupted = False
         body = self._buffer.flush()
         if not body:
-            self._turn_user_id = None
             return
 
-        logger.debug("flush: %r", body[:120])
+        logger.info("flush: %r", body[:120])
         typing = TypingAction(bot, chat_id)
 
         async with self._lock:
@@ -909,17 +831,15 @@ class TgLoop:
                 # Retry-once: on a mid-turn stall/death, respawn resuming the
                 # same sid and re-send the SAME body ONCE. Second failure ->
                 # user-facing notice. Bridges emit outbound only from completed
-                # events, so a retried turn double-sends nothing; any partially
-                # flushed stream bubble is abandoned (stream_msg_id reset below).
+                # events, so a retried turn double-sends nothing.
                 response = thinking = None
-                stream_msg_id = None
                 for attempt in range(2):
                     try:
                         self.ensure_provider()
                         assert self._provider is not None
                         typing.start()
                         await asyncio.to_thread(self._provider.send, body)
-                        response, thinking, stream_msg_id = await self._stream_response(bot, chat_id, typing)
+                        response, thinking = await self._stream_response(bot, chat_id, typing)
                         if self._provider and self._provider.session_id:
                             if self._state.session_id != self._provider.session_id:
                                 self._state.session_id = self._provider.session_id
@@ -937,8 +857,6 @@ class TgLoop:
                             await self._send_provider_notice(bot, chat_id, "provider.gave_up")
                             return
                         if attempt == 0:
-                            # Abandon any partial stream bubble; retry cleanly.
-                            stream_msg_id = None
                             continue
                         # Second failure: hand back to the buffer + notice.
                         self._buffer.prepend(body)
@@ -959,20 +877,9 @@ class TgLoop:
         ):
             await self._send_provider_notice(bot, chat_id, "provider.turn_capped")
 
-        # Pre-send merge: only if the SAME sender sent new messages while thinking.
-        # Other users' messages (group chat) never interrupt the current reply.
-        if self._same_sender_interrupted:
-            if stream_msg_id is None:
-                # Still thinking — no bubble visible. Safe to merge.
-                merged = f"{_MERGE_NOTE}\n{body}" if body else ""
-                self._buffer.prepend(merged)
-                logger.info("pre-send merge (thinking): reply dropped, %d chars re-queued", len(body))
-                self._turn_user_id = None
-                return
-            # Bubble already visible — deliver normally. New messages queued for next flush.
-            logger.info("same sender new inbound during streaming — delivering reply, new messages queued")
-        self._turn_user_id = None
-
+        # Reply always ships. Messages that arrived mid-turn stayed in the
+        # InboundBuffer (never drained) and become the next turn — no merge,
+        # no reply-drop.
         if not response and not thinking:
             return
 
@@ -999,52 +906,12 @@ class TgLoop:
                 if fragment.lower() in msg_text.lower():
                     reply_to_id = msg_id
                     break
-            if stream_msg_id is not None and reply_to_id is not None:
-                try:
-                    await bot.delete_message(chat_id=chat_id, message_id=stream_msg_id)
-                except Exception:
-                    pass
-                stream_msg_id = None
 
         bubbles = split_for_tg_typed(response)
-        text_bubbles = [b for b in bubbles if b["kind"] == "text"]
-
-        # Edit streaming preview in-place to first bubble, then append the rest.
-        # If the final handoff edit fails entirely, fall through and send bubble 0
-        # as a fresh message instead of silently dropping it.
-        skip_first_text = False
-        if stream_msg_id is not None and text_bubbles:
-            first = text_bubbles[0]["text"]
-            try:
-                await bot.edit_message_text(
-                    chat_id=chat_id, message_id=stream_msg_id,
-                    text=gfm_to_tg_html(first), parse_mode="HTML",
-                )
-                skip_first_text = True
-            except Exception as html_exc:
-                if "message is not modified" in str(html_exc).lower():
-                    # Preview already matches bubble 0 — already delivered, not a failure.
-                    skip_first_text = True
-                else:
-                    try:
-                        await bot.edit_message_text(
-                            chat_id=chat_id, message_id=stream_msg_id, text=first,
-                        )
-                        skip_first_text = True
-                    except Exception as plain_exc:
-                        if "message is not modified" in str(plain_exc).lower():
-                            skip_first_text = True
-                        else:
-                            logger.warning(
-                                "stream final edit failed — re-sending bubble 0 as new message"
-                            )
 
         total = len(bubbles)
         for idx, bubble in enumerate(bubbles):
             if bubble["kind"] == "text":
-                if skip_first_text:
-                    skip_first_text = False
-                    continue
                 send_kwargs = dict(
                     chat_id=chat_id,
                     text=gfm_to_tg_html(bubble["text"]),
@@ -1090,3 +957,5 @@ class TgLoop:
                 if reply_to_id is not None:
                     reply_to_id = None
             await asyncio.sleep(_SEND_GAP_SEC)
+        else:
+            logger.info("reply delivered: %d bubble(s)", total)

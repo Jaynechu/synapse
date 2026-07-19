@@ -12,6 +12,7 @@ from pathlib import Path
 
 from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 from synapse_core import marrow_session
 from synapse_core.alerts import AlertSink
@@ -231,7 +232,22 @@ def main() -> int:
     # --- start ---
     idle_loop.start()
 
-    app = Application.builder().token(cfg.bot_token).build()
+    # HTTPX timeouts. get_updates uses a separate request; its read timeout must
+    # stay above the long-poll timeout (PTB default 10s) so a poll never times
+    # out client-side before the server returns.
+    _timeouts = dict(
+        connect_timeout=cfg.http_connect_timeout_s,
+        read_timeout=cfg.http_read_timeout_s,
+        write_timeout=cfg.http_write_timeout_s,
+        pool_timeout=cfg.http_pool_timeout_s,
+    )
+    app = (
+        Application.builder()
+        .token(cfg.bot_token)
+        .request(HTTPXRequest(**_timeouts))
+        .get_updates_request(HTTPXRequest(**_timeouts))
+        .build()
+    )
     app.add_handler(MessageHandler(filters.TEXT, loop.on_message))
     app.add_handler(MessageHandler(filters.PHOTO, loop.on_photo))
     app.add_handler(MessageHandler(filters.ANIMATION, loop.on_animation))
