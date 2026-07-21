@@ -572,7 +572,7 @@ def run() -> int:
         lines.append("")
 
     lines.append("## Still pending (require Lumi)")
-    lines.append("- (1) WeChat new conversation with 屿忱 — needs `ILinkClient.login()` QR scan.")
+    lines.append("- (1) WeChat new conversation with 言澈 — needs `ILinkClient.login()` QR scan.")
     lines.append("- (2-live) Slash commands triggered from real WeChat bubble — same blocker.")
     lines.append("- (4-real-lid) Real `NSWorkspaceWillSleepNotification` from closing the laptop.")
     lines.append("")
