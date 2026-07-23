@@ -57,7 +57,17 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - [wx] split_for_wechat — 200-char paragraph/sentence split. Media upload two-step CDN (getuploadurl → AES-128-ECB POST). CDN quirks: MicroMessenger UA required, ~1/3 flaky → 3 retries. Image downscale ≤250KB via sips. 550KB ceiling (chunked = FUTURE). Thinking: one bubble, full text.
 - Ack strings: messages.py t(key, style) — cn/en pairs mandatory. Style persisted in BridgeState.voice_style.
 
-## 5. Commands
+## 5. Resident listener (unsolicited turns)
+
+- Turn classification: first event `system(task_notification)` = unsolicited turn (notification frame yields no text); consecutive unsolicited turns possible (multiple background agents).
+- Provider (`synapse_core/providers/cc.py`): `poll_line(timeout)` — no liveness clock, `POLL_EOF` sentinel + `alive=False` on reader EOF; `recv(first_line=...)` processes a pre-read line before the queue.
+- Shared `_deliver_reply` — turn-aware stream/drain delivers unsolicited turns inline; solicited turn returned to flush as normal.
+- Resident idle listener: [tg] asyncio task under the flush `asyncio.Lock`, started post_init. [wx] daemon thread. Delivers background-task answers between turns; typing indicator runs during generation. Lazy respawn on EOF only — listener never respawns.
+- Lock discipline: [tg] one asyncio.Lock serializes flush+listener. [wx] `_state_lock` is never held across recv; dedicated `_recv_lock` is the single-consumer guarantee on the provider stdout queue — flush holds it across send→drain→retry, listener across poll+drain. Strict ordering: `_recv_lock` outer, `_state_lock` inner. Any future stdout-queue consumer must take `_recv_lock`.
+- Unsolicited delivery target = last real chat id (`_pending_chat_id`); if None, WARNING + drain + drop.
+- Storm alert `bridge_turn_storm` when >`unsolicited_storm_cap` (config, default 5) unsolicited turns land in one lock-hold.
+
+## 6. Commands
 
 - Dispatch: slash → picker digit → mm± bare → MODEL_ALIASES → forward.
 - Key handlers: /clear (session close + sessionend fire), /resume (tri-mode: list/pick/direct + cross-project cwd resolve), /rewind + /regen (jsonl truncate + respawn), /cwd (preset switch, implicit /clear).
@@ -65,7 +75,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - [wx] unique: /switch (cross-channel session picker). /compact (cc protocol pipe).
 - Full list → COMMANDS.md.
 
-## 6. Session lifecycle
+## 7. Session lifecycle
 
 - SessionTracker (sessions.json, atomic write) — set on system{init}, forget on /clear.
 - IdleFireLoop (30min scan) — cross-channel cleanup (claimed_away_hook + replay_bookmark); mid_scan three-way trigger (4h+10turns / 30turns+2h / 6h+4turns) via marrow.mid_scan subprocess.
@@ -74,13 +84,13 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - MARROW_BRIDGE=1 → marrow SessionEnd hook defers to bridge (bridge_owns marker, 12h TTL fallback).
 - [wx] SleepWake: pyobjc will-sleep/did-wake → pause/reconnect/catchup.
 
-## 7. TTS voice pipeline [tg]
+## 8. TTS voice pipeline [tg]
 
 - Pipeline: text → TTS provider → OGG Opus → bot.send_voice.
 - Cascade: Qwen3 (free, best CN) → Volcengine (paid, ~300ms) → Edge-TTS (free, ~400ms).
 - Toggle: /tts off (default) | on | auto (>N chars). Config-driven provider selection.
 
-## 8. Safety nets
+## 9. Safety nets
 
 - AlertSink: file per alert + optional mw add-alert.
 - HealthGate: dirty boot detection → alert.
@@ -89,7 +99,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - [wx] iLink retry: @with_retry exp backoff cap 5. SleepWakeObserver. cc stderr drain (deadlock prevention).
 - Launchd KeepAlive + 30s throttle (both channels).
 
-## 9. Config and paths
+## 10. Config and paths
 
 - Data dir: ~/.config/synapse-{tg,wx}/ (alerts, health, sessions.json, bridge_state.json).
 - Logs: ~/Library/Logs/synapse-{tg,wx}.{out,err}.log.
@@ -97,7 +107,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - Auth: [tg] bot token in config. [wx] iLink QR → token.json.
 - Plist: com.synapse-{tg,wx}.bridge. Template in deploy/.
 
-## 10. Known gaps
+## 11. Known gaps
 
 - [wx] CDN media send failures are log-only, no AlertSink.
 - [wx] 550KB upload ceiling; chunked upload = FUTURE.
