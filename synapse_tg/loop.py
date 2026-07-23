@@ -55,6 +55,22 @@ _MAX_CONSECUTIVE_DEATHS = 3
 _FLUSH_INTERVAL_SEC = 0.5
 # Extra seconds added on top of a 429 RetryAfter before retrying the send.
 _RETRY_AFTER_MARGIN_SEC = 0.5
+# Idle listener scheduling (internal, not user-varying): poll one line each
+# iteration; after releasing the lock, yield long enough for a pending
+# check_flush to win it (asyncio.Lock wakes waiters FIFO; the sleep guarantees
+# a window).
+_LISTEN_POLL_TIMEOUT_SEC = 1.0
+_LISTEN_RELEASE_SLEEP_SEC = 0.25
+
+# Marker the recv-drain thread puts after each turn's result so the async
+# consumer can tell turn boundaries apart across multiple back-to-back turns.
+_TURN_END = object()
+
+
+def _is_unsolicited_first_event(ev: dict) -> bool:
+    """A turn whose FIRST event is system/task_notification is unsolicited:
+    the CLI ran a NEW turn with no stdin (background task completion)."""
+    return ev.get("type") == "system" and ev.get("subtype") == "task_notification"
 
 
 TG_BUBBLE_FORMAT_PROMPT = (
@@ -74,17 +90,21 @@ TG_BUBBLE_FORMAT_PROMPT = (
 )
 
 
-def _recv_to_queue(provider: ClaudeCodeProvider, q: "queue.Queue") -> None:
-    """Background thread: drain provider.recv() into a queue. Sentinel = None.
+def _recv_to_queue(
+    provider: ClaudeCodeProvider, q: "queue.Queue", first_line: str | None = None
+) -> None:
+    """Background thread: drain ONE provider.recv() turn into a queue.
 
-    The provider owns liveness now (soft check + hard idle kill in recv), so a
-    stall/death surfaces as an exception put on the queue — no per-turn queue
-    timeout here. The async consumer blocks on q.get() until an event, the
-    exception, or the None sentinel arrives.
+    Puts each event, then a _TURN_END marker after the turn's result, then a
+    None sentinel when the thread finishes. The provider owns liveness (soft
+    check + hard idle kill in recv), so a stall/death surfaces as an exception
+    on the queue. `first_line` is a raw line the idle listener already pulled
+    off the queue; recv processes it before reading further.
     """
     try:
-        for ev in provider.recv():
+        for ev in provider.recv(first_line=first_line):
             q.put(ev)
+        q.put(_TURN_END)
     except Exception as exc:
         q.put(exc)
     finally:
@@ -324,65 +344,76 @@ class TgLoop:
         self._death_count = 0
         return "\n\n".join(chunks), "\n".join(thinking)
 
-    async def _stream_response(
-        self, bot: Bot, chat_id: int, typing: TypingAction
-    ) -> tuple[str, str]:
-        """Drain the provider response to completion.
+    def _handle_init_event(self, ev: dict) -> None:
+        """Shared system(init) handling: adopt session_id, stamp created_at,
+        record the session. Used by every turn (solicited + unsolicited)."""
+        sid = ev.get("session_id")
+        if not (sid and isinstance(sid, str)):
+            return
+        if self._state.session_id != sid:
+            self._state.session_id = sid
+            self._session_created_at = get_session_created_at(
+                self._cfg.session_created_command, sid
+            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self._persist_state()
+        elif not self._session_created_at:
+            self._session_created_at = get_session_created_at(
+                self._cfg.session_created_command, sid
+            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if self._sessions is not None and self._pending_chat_id is not None:
+            self._sessions.set(str(self._pending_chat_id), sid)
+        if self._record_session is not None:
+            try:
+                self._record_session(sid, self._state.model)
+            except Exception:
+                logger.warning("record_session failed for %s", sid)
 
-        Returns (full_text, thinking). Typing runs for the whole turn; bubbles
-        are sent by the caller after this returns.
+    async def _collect_turn(
+        self, typing: TypingAction, first_line: str | None = None
+    ) -> tuple[str, str, bool] | None:
+        """Drain ONE turn from the provider. Returns (text, thinking,
+        unsolicited) or None when the recv thread ended before any turn
+        (clean EOF between turns). Raises on provider death mid-turn.
+
+        `first_line` is a raw line the idle listener already pulled off the
+        queue that opened this turn; recv processes it before the queue.
         """
         assert self._provider is not None
-
         q: queue.Queue = queue.Queue()
         t = threading.Thread(
             target=_recv_to_queue,
-            args=(self._provider, q),
+            args=(self._provider, q, first_line),
             daemon=True,
         )
         t.start()
 
         text_chunks: list[str] = []
         thinking_chunks: list[str] = []
-
+        unsolicited = False
+        first_event = True
+        completed = False
         loop = asyncio.get_event_loop()
 
         while True:
-            # No queue timeout: the provider's own liveness logic (soft check +
-            # hard idle kill) surfaces stall/death as an exception on the queue.
             ev = await loop.run_in_executor(None, q.get)
-
             if ev is None:
-                # Sentinel: thread finished cleanly
                 break
+            if ev is _TURN_END:
+                completed = True
+                continue
             if isinstance(ev, Exception):
                 raise ev
 
-            t_type = ev.get("type")
+            if first_event:
+                unsolicited = _is_unsolicited_first_event(ev)
+                first_event = False
 
+            t_type = ev.get("type")
             if t_type == "system":
                 if ev.get("subtype") == "init":
-                    sid = ev.get("session_id")
-                    if sid and isinstance(sid, str):
-                        if self._state.session_id != sid:
-                            self._state.session_id = sid
-                            self._session_created_at = get_session_created_at(
-                                self._cfg.session_created_command, sid
-                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                            self._persist_state()
-                        elif not self._session_created_at:
-                            self._session_created_at = get_session_created_at(
-                                self._cfg.session_created_command, sid
-                            ) or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                        if self._sessions is not None and self._pending_chat_id is not None:
-                            self._sessions.set(str(self._pending_chat_id), sid)
-                        if self._record_session is not None:
-                            try:
-                                self._record_session(sid, self._state.model)
-                            except Exception:
-                                logger.warning("record_session failed for %s", sid)
+                    self._handle_init_event(ev)
+                # task_notification and other system frames yield no text.
                 continue
-
             if t_type == "assistant":
                 msg = ev.get("message") or {}
                 for block in msg.get("content", []):
@@ -403,23 +434,66 @@ class TgLoop:
                     snap = {k: v for k, v in usage.items() if isinstance(v, int)}
                     if snap:
                         self._state.last_assistant_usage = snap
-
             elif t_type == "result":
                 usage = ev.get("usage")
                 if isinstance(usage, dict):
                     self._merge_usage(usage)
-                break
 
+        if not completed and first_event:
+            # Thread ended with no events at all (clean EOF between turns).
+            return None
         self._death_count = 0
-        full_text = "\n\n".join(text_chunks)
-        thinking = "\n".join(thinking_chunks)
+        return "\n\n".join(text_chunks), "\n".join(thinking_chunks), unsolicited
 
-        return full_text, thinking
+    async def _stream_response(
+        self, bot: Bot, chat_id: int, typing: TypingAction
+    ) -> tuple[str, str]:
+        """Drain provider turns until the first solicited reply turn.
+
+        Any unsolicited turn (background task completion) seen before the
+        solicited reply is delivered immediately via _deliver_reply, then
+        collection continues. Returns the solicited turn's (text, thinking).
+        """
+        assert self._provider is not None
+        unsolicited_count = 0
+        while True:
+            turn = await self._collect_turn(typing)
+            if turn is None:
+                return "", ""
+            text, thinking, unsolicited = turn
+            if not unsolicited:
+                return text, thinking
+            unsolicited_count += 1
+            self._maybe_storm_alert(unsolicited_count)
+            await self._deliver_reply(bot, chat_id, text, thinking)
 
     def _merge_usage(self, usage: dict[str, Any]) -> None:
         for k, v in usage.items():
             if isinstance(v, int):
                 self._state.usage_total[k] = self._state.usage_total.get(k, 0) + v
+
+    def _maybe_storm_alert(self, count: int) -> None:
+        """More than unsolicited_storm_cap unsolicited turns in one lock-hold
+        signals the CLI protocol may have started mispairing again. Alert once
+        (at cap+1) + log ERROR; delivery keeps going regardless."""
+        cap = self._cfg.unsolicited_storm_cap
+        if cap <= 0 or count != cap + 1:
+            return
+        logger.error(
+            "unsolicited turn storm: %d turns in one lock-hold (cap %d)",
+            count, cap,
+        )
+        if self._alerts is not None:
+            try:
+                self._alerts.write(
+                    "warn", "bridge_turn_storm",
+                    f"{count} unsolicited turns delivered in one lock-hold "
+                    f"(cap {cap}) — possible CLI mispairing",
+                    source="loop.stream",
+                    fingerprint="bridge_turn_storm",
+                )
+            except Exception as ae:
+                logger.warning("alerts.write failed: %s", ae)
 
     async def _send_provider_notice(self, bot: Bot, chat_id: int, key: str) -> None:
         try:
@@ -880,6 +954,14 @@ class TgLoop:
         # Reply always ships. Messages that arrived mid-turn stayed in the
         # InboundBuffer (never drained) and become the next turn — no merge,
         # no reply-drop.
+        await self._deliver_reply(bot, chat_id, response, thinking)
+
+    async def _deliver_reply(
+        self, bot: Bot, chat_id: int, response: str, thinking: str
+    ) -> None:
+        """Send one completed turn (thinking blockquote + quote-tag resolution
+        + split + media + retry/fallback). Shared by the solicited reply path
+        and unsolicited (background-task) turns so both deliver identically."""
         if not response and not thinking:
             return
 

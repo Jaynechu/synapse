@@ -28,6 +28,9 @@ class TgConfig:
     # Per-turn OUTPUT token brake: interrupt a runaway turn instead of burning
     # quota. 0 or negative disables.
     turn_output_cap: int = 20000
+    # Storm guard: more than this many unsolicited (background-task) turns
+    # delivered within one lock-hold raises a marrow alert. 0 disables.
+    unsolicited_storm_cap: int = 5
     user_name: str = "user"
     assistant_name: str = "assistant"
 
@@ -158,6 +161,9 @@ def load_config(path: Path | None = None) -> TgConfig:
         cap = provider.get("turn_output_cap")
         if isinstance(cap, int) and not isinstance(cap, bool):
             cfg.turn_output_cap = cap
+        storm = provider.get("unsolicited_storm_cap")
+        if isinstance(storm, int) and not isinstance(storm, bool) and storm >= 0:
+            cfg.unsolicited_storm_cap = storm
 
     storage = data.get("storage") or {}
     if isinstance(storage, dict):
