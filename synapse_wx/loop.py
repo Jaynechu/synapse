@@ -214,6 +214,15 @@ class MainLoop:
         # state.last_user_msg_ts. Held ONLY during data handoff — never
         # across provider.send / _drain_recv (would re-serialize the loops).
         self._state_lock = threading.RLock()
+        # `_recv_lock` is the SINGLE-CONSUMER guarantee for the provider's
+        # stdout queue (mirrors tg's asyncio.Lock). The flush path holds it
+        # across the ENTIRE send→drain→retry-respawn sequence; the idle
+        # listener holds it across poll_line + its unsolicited drain. Without
+        # it both threads block on the same _stdout_q.get() and split one
+        # turn's lines, so neither sees `result` (subprocess-died-during-recv).
+        # Strict ordering: never block on recv while holding _state_lock; the
+        # listener acquires _recv_lock OUTSIDE _state_lock to avoid deadlock.
+        self._recv_lock = threading.Lock()
         self._stop_evt = threading.Event()
         self._poll_thread: threading.Thread | None = None
         self._flush_thread: threading.Thread | None = None
@@ -718,31 +727,39 @@ class MainLoop:
         # (alert + user bubble). Outbound only fires from completed events, so a
         # retried turn double-sends nothing.
         reply_text = None
-        for attempt in range(2):
-            try:
-                # Lazy typing: fire indicator at the moment cc actually starts
-                # thinking — NOT during the debounce buffer wait. Showing
-                # "正在输入中" while the bridge is silently buffering would be
-                # misleading: cc isn't working yet.
-                if from_wxid and self._typing_ping is None:
-                    self._typing_ping = TypingPing(
-                        self._ilink, from_wxid, ctx_token, interval=5.0
-                    )
-                    self._typing_ping.start()
-                self._provider.send(assembled)
-                reply_text = self._drain_recv()
-                break
-            except ProviderDeadError as e:
-                if attempt == 0:
-                    logger.warning("provider dead mid-turn, retrying once: %s", e)
-                    if not self._ensure_provider():
-                        self._stop_typing()
-                        self._handle_provider_dead(e, from_wxid, ctx_token)
-                        return
-                    continue
-                self._stop_typing()
-                self._handle_provider_dead(e, from_wxid, ctx_token)
-                return
+        # Hold _recv_lock across the WHOLE solicited turn consumption
+        # (send + drain + retry-respawn). This is the single-consumer guarantee:
+        # while it is held the idle listener cannot touch poll_line, so one
+        # turn's lines never split between the two threads. NOT holding
+        # _state_lock here — recv must never block under _state_lock.
+        with self._recv_lock:
+            for attempt in range(2):
+                try:
+                    # Lazy typing: fire indicator at the moment cc actually
+                    # starts thinking — NOT during the debounce buffer wait.
+                    # Showing "正在输入中" while the bridge is silently buffering
+                    # would be misleading: cc isn't working yet.
+                    if from_wxid and self._typing_ping is None:
+                        self._typing_ping = TypingPing(
+                            self._ilink, from_wxid, ctx_token, interval=5.0
+                        )
+                        self._typing_ping.start()
+                    self._provider.send(assembled)
+                    reply_text = self._drain_recv()
+                    break
+                except ProviderDeadError as e:
+                    if attempt == 0:
+                        logger.warning(
+                            "provider dead mid-turn, retrying once: %s", e
+                        )
+                        if not self._ensure_provider():
+                            self._stop_typing()
+                            self._handle_provider_dead(e, from_wxid, ctx_token)
+                            return
+                        continue
+                    self._stop_typing()
+                    self._handle_provider_dead(e, from_wxid, ctx_token)
+                    return
 
         # Turn output cap: the provider interrupted a runaway turn (brake, not
         # a failure — no retry). Notify the user; the partial reply below still
@@ -1160,15 +1177,22 @@ class MainLoop:
         logger.info("idle listener stopped")
 
     def _listen_once(self) -> None:
-        """One idle-listener iteration. Polls INSIDE the flush lock so it can
-        never overlap a send; the caller sleeps OUTSIDE it so a pending
-        maybe_flush can win the lock. Re-reads self._provider fresh every call —
-        never caches it (a slash-command swap replaces the object without
-        holding this lock)."""
+        """One idle-listener iteration. Polls INSIDE _recv_lock so it can never
+        overlap the flush path's send→drain on the same stdout queue; the caller
+        sleeps OUTSIDE the lock so a pending maybe_flush can win it. Re-reads
+        self._provider fresh every call — never caches it (a slash-command swap
+        replaces the object without holding this lock).
+
+        _state_lock is taken only briefly to snapshot mutable state
+        (_last_from_wxid / _last_ctx_token); it is NEVER held across the
+        blocking poll_line/drain, so it can never deadlock against a flush path
+        that grabs _state_lock for its own atomic snapshots. Strict ordering:
+        _recv_lock is the outer lock here, _state_lock the inner — and the flush
+        path never holds _state_lock while blocking on recv."""
         provider = self._provider
         if provider is None or not getattr(provider, "alive", False):
             return  # nothing to drain; lazy respawn happens on the next send
-        with self._state_lock:
+        with self._recv_lock:
             # Re-read after acquiring: a swap may have replaced it while waiting.
             provider = self._provider
             if provider is None or not getattr(provider, "alive", False):
@@ -1184,8 +1208,9 @@ class MainLoop:
                 return
             # A line means a full turn is arriving unsolicited. Target the last
             # real chat; if none, drain-and-drop with a warning (never crash).
-            from_wxid = self._last_from_wxid
-            ctx_token = self._last_ctx_token
+            with self._state_lock:
+                from_wxid = self._last_from_wxid
+                ctx_token = self._last_ctx_token
             if not from_wxid:
                 logger.warning(
                     "idle listener: unsolicited turn with no chat target — dropped"
