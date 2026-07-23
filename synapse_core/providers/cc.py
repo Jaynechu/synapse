@@ -67,6 +67,10 @@ _DEFAULT_TURN_OUTPUT_CAP = 20000
 # an Exception instance = a read error surfaced to recv().
 _STDOUT_EOF = object()
 
+# poll_line sentinel: the reader thread reported EOF or a read error while the
+# caller was polling idle. Distinct from None (no line within the timeout).
+POLL_EOF = object()
+
 
 def _read_stdout_to_queue(stdout_pipe, q: "queue.Queue") -> None:
     """Daemon thread: push each raw stdout line onto q; _STDOUT_EOF on EOF.
@@ -322,7 +326,28 @@ class ClaudeCodeProvider(Provider):
                 raise ProviderDeadError(f"stdout read error: {item}") from item
             return item
 
-    def recv(self) -> Iterator[dict[str, Any]]:
+    def poll_line(self, timeout: float) -> Any:
+        """Non-blocking-ish read of ONE raw stdout line for the idle listener.
+
+        No liveness clock: idle silence between turns is normal and unbounded,
+        so this never kills the process (unlike _next_line). Returns:
+        - the raw line string when one is available within `timeout`,
+        - None when the queue stayed empty (still idle),
+        - POLL_EOF when the reader thread reported EOF or a read error; sets
+          self.alive = False so the caller marks the provider dead.
+        """
+        if self._stdout_q is None:
+            return POLL_EOF
+        try:
+            item = self._stdout_q.get(timeout=max(0.0, timeout))
+        except queue.Empty:
+            return None
+        if item is _STDOUT_EOF or isinstance(item, Exception):
+            self.alive = False
+            return POLL_EOF
+        return item
+
+    def recv(self, first_line: str | None = None) -> Iterator[dict[str, Any]]:
         if not self.alive or self.process is None or self._stdout_q is None:
             raise ProviderDeadError("subprocess not alive")
         # Reset per-turn output-cap state at the start of every send->result
@@ -330,8 +355,17 @@ class ClaudeCodeProvider(Provider):
         self.turn_output_capped = False
         self._turn_output_by_request = {}
         saw_result = False
+        # first_line: a raw line already pulled off the queue by the idle
+        # listener's poll_line. Process it before touching the queue so the
+        # turn it opened is not lost; the idle liveness clock applies only from
+        # the first real queue read onward, as for a plain recv().
+        pending_first = first_line
         while True:
-            item = self._next_line()
+            if pending_first is not None:
+                item: Any = pending_first
+                pending_first = None
+            else:
+                item = self._next_line()
             if item is _STDOUT_EOF:
                 break
             line = item.strip()
