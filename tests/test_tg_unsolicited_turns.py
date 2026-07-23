@@ -178,3 +178,16 @@ def test_storm_alert_fires_once_at_cap_plus_one(tmp_path, monkeypatch):
     storm = [a for a in alerts.written if a["kind"] == "bridge_turn_storm"]
     assert len(storm) == 1
     assert storm[0]["fingerprint"] == "bridge_turn_storm"
+
+
+def test_storm_cap_default_when_absent():
+    from synapse_tg.config import TgConfig, load_config
+    assert TgConfig().unsolicited_storm_cap == 5
+
+
+def test_storm_cap_config_override(tmp_path):
+    from synapse_tg.config import load_config
+    p = tmp_path / "config.toml"
+    p.write_text("[provider]\nunsolicited_storm_cap = 3\n")
+    cfg = load_config(p)
+    assert cfg.unsolicited_storm_cap == 3

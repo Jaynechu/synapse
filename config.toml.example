@@ -65,6 +65,9 @@ cwd = ""
 marrow_bridge = false
 # Where claude stores its project data (auto-detected if blank)
 cc_projects_dir = ""
+# Storm guard: more than this many unsolicited (background-task) turns
+# delivered within one lock-hold raises a bridge_turn_storm alert. 0 disables.
+unsolicited_storm_cap = 5
 
 [storage]
 # Runtime data directory. Default: ~/.config/synapse-{channel}/
