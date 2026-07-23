@@ -22,6 +22,7 @@ from synapse_core.debounce import InboundBuffer
 from .media.inbound import build_read_tool_instruction, materialize
 from .media.outbound import dispatch_media_bubble
 from synapse_core.providers.base import Provider
+from synapse_core.providers.cc import POLL_EOF
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
@@ -40,6 +41,18 @@ DEFAULT_ALERT_DIR = Path.home() / ".config" / "synapse-wx" / "alerts"
 DEFAULT_MEDIA_DIR = Path.home() / ".config" / "synapse-wx" / "media"
 _DEFAULT_BUBBLE_GAP_SEC = 0.8
 _DEFAULT_BUBBLE_CAP = 10
+_DEFAULT_STORM_CAP = 5
+# Idle listener scheduling (internal, not user-varying): poll one line each
+# iteration; after releasing the flush lock, sleep so a pending maybe_flush can
+# win it.
+_LISTEN_POLL_TIMEOUT_SEC = 1.0
+_LISTEN_RELEASE_SLEEP_SEC = 0.25
+
+
+def _is_unsolicited_first_event(ev: dict) -> bool:
+    """A turn whose FIRST event is system/task_notification is unsolicited:
+    the CLI ran a NEW turn with no stdin (background task completion)."""
+    return ev.get("type") == "system" and ev.get("subtype") == "task_notification"
 # Quote-lite (post-v4): cc emits a <quote>FRAGMENT</quote> block ANYWHERE in
 # the reply. The real ref_msg outbound path was attempted live but WeChat does
 # NOT render the bubble as a quote-reply (see MAP.md "Known limitations").
@@ -188,6 +201,10 @@ class MainLoop:
         # B7: consecutive provider-death counter (reset on successful recv).
         # >=3 with session_id set → critical alert + user bubble.
         self._provider_death_count: int = 0
+        # Storm guard: >cap unsolicited turns in one lock-hold raises an alert.
+        self._storm_cap = (
+            cfg.unsolicited_storm_cap if cfg is not None else _DEFAULT_STORM_CAP
+        )
 
         # Decouple inbound long-poll from outbound flush:
         # - _poll_thread runs tick() (blocks on long poll, may sit ~20s)
@@ -200,6 +217,12 @@ class MainLoop:
         self._stop_evt = threading.Event()
         self._poll_thread: threading.Thread | None = None
         self._flush_thread: threading.Thread | None = None
+        # Resident idle listener: drains unsolicited (background-task) turns
+        # between sends so they never rot in the stdout queue and mispair.
+        self._listener_thread: threading.Thread | None = None
+        # Typing indicator owned by the idle-listener path (separate from the
+        # solicited-reply _typing_ping so a mid-turn overlap can't cross-stop).
+        self._listen_typing: TypingPing | None = None
 
     # ── lifecycle ──────────────────────────────────────────────────
 
@@ -237,8 +260,12 @@ class MainLoop:
         self._flush_thread = threading.Thread(
             target=self._flush_run, name="synapse-wx-flush-loop", daemon=True
         )
+        self._listener_thread = threading.Thread(
+            target=self._idle_listener, name="synapse-wx-idle-listener", daemon=True
+        )
         self._poll_thread.start()
         self._flush_thread.start()
+        self._listener_thread.start()
 
     def stop(self) -> None:
         self._stop_evt.set()
@@ -250,6 +277,16 @@ class MainLoop:
         if self._poll_thread:
             self._poll_thread.join(timeout=25.0)
             self._poll_thread = None
+        if self._listener_thread:
+            # Listener wakes at most every poll timeout + release sleep.
+            self._listener_thread.join(timeout=2.0)
+            self._listener_thread = None
+        if self._listen_typing is not None:
+            try:
+                self._listen_typing.stop()
+            except Exception as e:
+                logger.warning("listen typing stop error: %s", e)
+            self._listen_typing = None
         if self._provider is not None:
             try:
                 self._provider.close()
@@ -745,6 +782,24 @@ class MainLoop:
         # (they were never drained) and become the next turn: this reply ships
         # now, then the newer batch is thought about and answered on the next
         # flush. No pre-send merge / reply-drop.
+        thinking = self._last_thinking
+        self._last_thinking = ""
+        self._deliver_reply(from_wxid, ctx_token, reply_text, thinking)
+
+    def _deliver_reply(
+        self,
+        from_wxid: str | None,
+        ctx_token: str,
+        reply_text: str,
+        thinking: str,
+    ) -> None:
+        """Send one completed turn (quote-tag resolution + thinking bubbles +
+        split + media + per-bubble retry). Shared by the solicited reply path
+        (maybe_flush) and unsolicited (background-task) turns so both deliver
+        identically. Stops the active TypingPing after the first bubble lands."""
+        if not from_wxid or (not reply_text and not thinking):
+            self._stop_typing()
+            return
         # Quote-lite: extract <quote>FRAGMENT</quote> from the WHOLE reply
         # BEFORE splitting on newlines. Pre-split extraction guarantees a
         # multi-line tag never leaks across bubbles as literal text. The
@@ -761,12 +816,10 @@ class MainLoop:
         # /thinking: prepend full thinking content as one or more 【思考】 /
         # ⋯ bubbles when enabled. Thinking head goes BEFORE the fake-quote
         # bubble so the visual flow stays thinking → quoted → reply.
-        if self.state.thinking_on and self._last_thinking:
-            tbs = format_thinking_bubbles(self._last_thinking)
+        if self.state.thinking_on and thinking:
+            tbs = format_thinking_bubbles(thinking)
             if tbs:
                 bubbles = [{"kind": "text", "text": s} for s in tbs] + bubbles
-        # Reset per-turn so a stale thinking buffer never leaks into the next.
-        self._last_thinking = ""
         # Hard bubble cap at the outbound edge (main quota defense): merge
         # adjacent text bubbles until the turn fits within _bubble_cap. Media
         # bubbles never merge and keep their order.
@@ -910,16 +963,34 @@ class MainLoop:
 
     # ── recv drain ─────────────────────────────────────────────────
 
-    def _drain_recv(self) -> str:
-        """Consume provider.recv until result; mirror events into BridgeState.
+    def _collect_turn(
+        self, first_line: str | None = None
+    ) -> tuple[str, str, bool] | None:
+        """Drain ONE provider turn; mirror events into BridgeState.
 
-        E-polish: collect thinking content blocks into ``self._last_thinking``
-        so maybe_flush can emit a single 【思考】 bubble when state.thinking_on.
+        Returns (text, thinking, unsolicited) or None when the turn yielded no
+        events (clean EOF between turns). `first_line` is a raw line the idle
+        listener already pulled off the queue; recv processes it before reading
+        further. A turn whose FIRST event is system/task_notification is
+        unsolicited (a background-task completion the CLI ran with no stdin).
         """
         assert self._provider is not None
         text_chunks: list[str] = []
         thinking_chunks: list[str] = []
-        for ev in self._provider.recv():
+        unsolicited = False
+        first_event = True
+        # first_line is only ever set by the idle listener against the real
+        # ClaudeCodeProvider; plain recv() for the solicited path keeps mock /
+        # test providers (recv without the kwarg) working unchanged.
+        events = (
+            self._provider.recv(first_line=first_line)
+            if first_line is not None
+            else self._provider.recv()
+        )
+        for ev in events:
+            if first_event:
+                unsolicited = _is_unsolicited_first_event(ev)
+                first_event = False
             t = ev.get("type")
             if t == "system" and ev.get("subtype") == "init":
                 sid = ev.get("session_id")
@@ -972,15 +1043,42 @@ class MainLoop:
                 if isinstance(usage, dict):
                     self._merge_usage(usage)
                 self.state.last_result_ts = self._wallclock().timestamp()
+        # B7: recv() completed without raising — provider is alive, reset the
+        # consecutive death counter (even on an empty inter-turn EOF drain).
+        self._provider_death_count = 0
+        if first_event:
+            # recv() ended with no events (clean EOF between turns).
+            return None
         # Mirror provider's cumulative usage if it tracks separately.
         prov_usage = getattr(self._provider, "usage_total", None)
         if isinstance(prov_usage, dict) and prov_usage:
             self.state.usage_total = dict(prov_usage)
-        # B7: successful recv — provider is alive, reset consecutive death counter.
-        self._provider_death_count = 0
-        # Stash thinking for maybe_flush to wrap into one bubble (if enabled).
-        self._last_thinking = "".join(thinking_chunks).strip()
-        return "".join(text_chunks)
+        return "".join(text_chunks), "".join(thinking_chunks).strip(), unsolicited
+
+    def _drain_recv(self) -> str:
+        """Drain provider turns until the first solicited reply turn.
+
+        Any unsolicited turn (background-task completion) seen before the
+        solicited reply is delivered immediately via _deliver_reply, then
+        collection continues. Returns the solicited turn's text and stashes its
+        thinking in self._last_thinking for maybe_flush to wrap into a bubble.
+        """
+        assert self._provider is not None
+        unsolicited_count = 0
+        while True:
+            turn = self._collect_turn()
+            if turn is None:
+                self._last_thinking = ""
+                return ""
+            text, thinking, unsolicited = turn
+            if not unsolicited:
+                self._last_thinking = thinking
+                return text
+            unsolicited_count += 1
+            self._maybe_storm_alert(unsolicited_count)
+            self._deliver_reply(
+                self._last_from_wxid, self._last_ctx_token, text, thinking
+            )
 
     def _collect_assistant(
         self,
@@ -1020,6 +1118,120 @@ class MainLoop:
         for k, v in usage.items():
             if isinstance(v, int):
                 self.state.usage_total[k] = self.state.usage_total.get(k, 0) + v
+
+    def _maybe_storm_alert(self, count: int) -> None:
+        """More than _storm_cap unsolicited turns in one lock-hold signals the
+        CLI protocol may have started mispairing again. Alert once (at cap+1) +
+        log ERROR; delivery keeps going regardless."""
+        cap = self._storm_cap
+        if cap <= 0 or count != cap + 1:
+            return
+        logger.error(
+            "unsolicited turn storm: %d turns in one lock-hold (cap %d)",
+            count, cap,
+        )
+        if self._alerts is not None:
+            try:
+                self._alerts.write(
+                    "warn", "bridge_turn_storm",
+                    f"{count} unsolicited turns delivered in one lock-hold "
+                    f"(cap {cap}) — possible CLI mispairing",
+                    source="loop.listener",
+                    fingerprint="bridge_turn_storm",
+                )
+            except Exception as ae:
+                logger.warning("alerts.write failed: %s", ae)
+
+    # ── resident idle listener ─────────────────────────────────────
+
+    def _idle_listener(self) -> None:
+        """Resident thread: drain unsolicited turns between sends for the life
+        of the bridge. Never dies from an exception (catch-all -> log ->
+        continue). Exits on _stop_evt."""
+        logger.info("idle listener started")
+        while not self._stop_evt.is_set():
+            if not self._paused:
+                try:
+                    self._listen_once()
+                except Exception as e:  # never let the listener die
+                    logger.warning("idle listener iteration error: %s", e)
+            # Sleep OUTSIDE the lock so a pending maybe_flush wins it.
+            self._sleeper(_LISTEN_RELEASE_SLEEP_SEC)
+        logger.info("idle listener stopped")
+
+    def _listen_once(self) -> None:
+        """One idle-listener iteration. Polls INSIDE the flush lock so it can
+        never overlap a send; the caller sleeps OUTSIDE it so a pending
+        maybe_flush can win the lock. Re-reads self._provider fresh every call —
+        never caches it (a slash-command swap replaces the object without
+        holding this lock)."""
+        provider = self._provider
+        if provider is None or not getattr(provider, "alive", False):
+            return  # nothing to drain; lazy respawn happens on the next send
+        with self._state_lock:
+            # Re-read after acquiring: a swap may have replaced it while waiting.
+            provider = self._provider
+            if provider is None or not getattr(provider, "alive", False):
+                return
+            line = provider.poll_line(_LISTEN_POLL_TIMEOUT_SEC)
+            if line is None:
+                return
+            if line is POLL_EOF:
+                logger.info(
+                    "idle listener: provider EOF — marked dead, awaiting respawn"
+                )
+                provider.alive = False
+                return
+            # A line means a full turn is arriving unsolicited. Target the last
+            # real chat; if none, drain-and-drop with a warning (never crash).
+            from_wxid = self._last_from_wxid
+            ctx_token = self._last_ctx_token
+            if not from_wxid:
+                logger.warning(
+                    "idle listener: unsolicited turn with no chat target — dropped"
+                )
+                # Still drain the turn so it doesn't rot in the queue.
+                self._collect_turn(first_line=line)
+                return
+            self._listen_typing = TypingPing(
+                self._ilink, from_wxid, ctx_token, interval=5.0
+            )
+            self._listen_typing.start()
+            try:
+                self._drain_unsolicited(from_wxid, ctx_token, line)
+            finally:
+                tp = self._listen_typing
+                self._listen_typing = None
+                if tp is not None:
+                    try:
+                        tp.stop()
+                    except Exception as e:
+                        logger.warning("listen typing stop failed: %s", e)
+
+    def _drain_unsolicited(
+        self, from_wxid: str, ctx_token: str, first_line: str
+    ) -> None:
+        """Collect and deliver the unsolicited turn opened by first_line, plus
+        any consecutive back-to-back turns already queued behind it."""
+        count = 0
+        line: str | None = first_line
+        while line is not None:
+            turn = self._collect_turn(first_line=line)
+            if turn is not None:
+                text, thinking, _unsolicited = turn
+                count += 1
+                self._maybe_storm_alert(count)
+                self._deliver_reply(from_wxid, ctx_token, text, thinking)
+            # Peek for the next queued turn without blocking on idle liveness.
+            provider = self._provider
+            if provider is None or not getattr(provider, "alive", False):
+                break
+            nxt = provider.poll_line(0.0)
+            if nxt is None or nxt is POLL_EOF:
+                if nxt is POLL_EOF:
+                    provider.alive = False
+                break
+            line = nxt
 
     # ── command hooks (used by commands.Registry via CommandContext) ──
 
