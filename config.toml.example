@@ -27,6 +27,32 @@ receipt_text_chars = 120
 # rides the reply kick instead of an empty string, e.g. Msg #7 replied: "[media]".
 kick_media_placeholder = "[media]"
 
+# ── Cortex shell (tg) ─────────────────────────────────
+# false = plain relay resident (no scheduler, no silence cycle, no cortex env).
+[cortex]
+shell_enabled = false
+# Shell id handed to marrow as MARROW_CORTEX; must appear in marrow's
+# [cortex].shells list for the resident to get the cortex tools.
+shell_id = "tg"
+# Ledger shared with marrow: <dir>/<shell>.json (session_id / next_wake_at /
+# last_note_ts / occupancy). Keep the socket path SHORT — macOS caps an
+# AF_UNIX path at 104 bytes. marrow's [cortex].shell_socket must match.
+shell_state_dir = "~/.config/marrow/state/shells"
+shell_socket = "~/.config/marrow/state/shells/tg.sock"
+# Minutes of user silence before one rendered note turn is fed to the resident.
+shell_idle_min = 20
+# argv printing the wakeup note on stdout. Empty = every round is skipped.
+note_render_cmd = []
+note_render_timeout_s = 20
+# Machine tag opening a fed turn — must be a marrow [cortex].machine_markers
+# member, else the fed note reads as a real user message.
+shell_note_tag = "⏳ [NEW ROUND]"
+# Context occupancy at which the resident is asked to wrap up and is then
+# respawned fresh. 0 disables the fuse.
+fuse_tokens = 180000
+fuse_tag = "⚙️ [FUSE]"
+# fuse_prompt_text = "..."
+
 # ── WeChat ────────────────────────────────────────────
 [user]
 # Your wxid — run `python -m synapse_wx.ilink` to find it after QR login

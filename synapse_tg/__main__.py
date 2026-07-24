@@ -244,15 +244,28 @@ def main() -> int:
     # Resident idle listener: drains unsolicited (background-task) turns while
     # no send is pending so they deliver on completion instead of mispairing.
     listener_box: dict = {"task": None}
+    # Cortex shell host (T9): scheduler task owning the silence cycle, wake
+    # ledger and token fuse. Absent unless [cortex].shell_enabled.
+    shell_box: dict = {"host": None, "task": None}
 
     async def _post_init(application) -> None:
         listener_box["task"] = application.create_task(loop._idle_listener())
+        if cfg.shell_enabled:
+            from .shell import ShellHost
+            host = ShellHost(cfg, loop)
+            shell_box["host"] = host
+            loop.attach_shell(host)
+            shell_box["task"] = application.create_task(host.run())
+            logger.info("cortex shell host started (shell=%s)", cfg.shell_id)
 
     async def _post_shutdown(application) -> None:
         loop.stop_listener()
-        task = listener_box["task"]
-        if task is not None:
-            task.cancel()
+        host = shell_box["host"]
+        if host is not None:
+            host.stop()
+        for task in (listener_box["task"], shell_box["task"]):
+            if task is not None:
+                task.cancel()
 
     app = (
         Application.builder()

@@ -159,6 +159,12 @@ class TgLoop:
         # Resident idle listener: drains unsolicited (background-task) turns
         # between sends so they never rot in the stdout queue and mispair.
         self._listener_stop = asyncio.Event()
+        # Cortex shell host (T9), attached by __main__ when shell_enabled.
+        # None = plain relay resident, every shell branch below is skipped.
+        self._shell = None
+
+    def attach_shell(self, shell) -> None:
+        self._shell = shell
 
     def _load_state(self) -> BridgeState:
         state = BridgeState(model=self._cfg.default_model)
@@ -291,6 +297,9 @@ class TgLoop:
             idle_soft_s=cfg.idle_soft_s,
             idle_hard_s=cfg.idle_hard_s,
             turn_output_cap=cfg.turn_output_cap,
+            # Cortex shell id — marrow reads MARROW_CORTEX to decide whether
+            # this resident gets the cortex tools/hooks (T8).
+            extra_env={"MARROW_CORTEX": cfg.shell_id} if cfg.shell_enabled else None,
         )
 
     def ensure_provider(self) -> None:
@@ -792,13 +801,15 @@ class TgLoop:
                media_type: str = "") -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
-        # P6: inbound from her (chat_id matches the authorized recipient) drives
-        # watch-reply + morning flag-pull kicks. Any other chat is ignored here.
-        # `text` = her reply body, threaded into the reply kick so the wakeup
-        # note shows WHAT she said (empty for media-only turns). `msg_date` =
-        # Telegram's native message timestamp, bounding the receipt stamp to
-        # notes sent at/before this message (F1). `media_type` tags a
-        # media-only turn (e.g. "photo") so the receipt shows what she sent.
+        # Any inbound message restarts the cortex shell's silence cycle.
+        if self._shell is not None:
+            self._shell.on_user_message()
+        # P6: inbound from the authorized recipient drives watch-reply kicks.
+        # Any other chat is ignored here. `text` = the reply body, threaded into
+        # the reply kick so the wakeup note shows WHAT was said (empty for
+        # media-only turns). `msg_date` = Telegram's native message timestamp,
+        # bounding the receipt stamp to notes sent at/before this message (F1).
+        # `media_type` tags a media-only turn (e.g. "photo").
         if self._is_from_her(chat_id):
             self._inbound_from_her(text, msg_date=msg_date, media_type=media_type)
 
@@ -813,10 +824,9 @@ class TgLoop:
 
     def _inbound_from_her(self, text: str = "", msg_date: datetime | None = None,
                           media_type: str = "") -> None:
-        """Her message landed on tg -> claim any armed watches on tg (one kick),
-        and morning flag-pull (night flag + past morning_start -> kick). Never
-        raises; no-ops without kick_cmd. Reply path claims instantly (no other
-        DB query). `text` = her reply body, attached to the reply kick; a
+        """Her message landed on tg -> claim any armed watches on tg (one kick).
+        Never raises; no-ops without kick_cmd. Reply path claims instantly (no
+        other DB query). `text` = her reply body, attached to the reply kick; a
         media-only reply (no extractable text) substitutes "[<media_type>]" (or
         the config placeholder when the type is unknown) so the reason line
         never renders an empty quote. `msg_date` bounds the receipt stamp to
@@ -844,10 +854,6 @@ class TgLoop:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
                 cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
                                  text_chars=self._cfg.outbox_kick_text_chars)
-            if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
-                    cortex_kick.past_morning_start(
-                        self._cfg.night_morning_start, self._cfg.timezone):
-                cortex_kick.kick(kc, "morning")
         except Exception as e:
             logger.warning("inbound-from-her kick failed: %s", e)
 
@@ -1056,6 +1062,54 @@ class TgLoop:
         # InboundBuffer (never drained) and become the next turn — no merge,
         # no reply-drop.
         await self._deliver_reply(bot, chat_id, response, thinking)
+        await self._shell_after_turn()
+
+    async def _shell_after_turn(self) -> None:
+        """Hand a completed turn to the cortex shell host (token ledger + fuse).
+        No-op for a plain relay resident; never raises into the turn path."""
+        if self._shell is None:
+            return
+        try:
+            await self._shell.after_turn()
+        except Exception as e:  # noqa: BLE001 — shell bookkeeping is best-effort
+            logger.warning("shell after_turn failed: %s", e)
+
+    async def feed_turn(self, body: str) -> bool:
+        """Feed one machine turn (note / fuse prompt) into the resident session
+        and ship its reply to tg like any other turn — free-round replies are
+        never held. Returns False when there is no chat target or the provider
+        could not take the turn."""
+        bot = self._bot
+        chat_id = self._pending_chat_id
+        if bot is None or chat_id is None:
+            logger.warning("feed_turn: no chat target — round skipped")
+            return False
+        typing = TypingAction(bot, chat_id)
+        async with self._lock:
+            try:
+                self.ensure_provider()
+                if self._provider is None:
+                    logger.warning("feed_turn: no provider — round skipped")
+                    return False
+                typing.start()
+                await asyncio.to_thread(self._provider.send, body)
+                response, thinking = await self._stream_response(bot, chat_id, typing)
+            except Exception as e:
+                logger.warning("feed_turn failed: %s", e)
+                return False
+            finally:
+                typing.stop()
+        await self._deliver_reply(bot, chat_id, response, thinking)
+        return True
+
+    def shell_respawn(self) -> None:
+        """Drop the resident session and spawn a fresh one (fuse). Queued user
+        messages stay on the InboundBuffer and land in the new session."""
+        self._state.session_id = None
+        self._session_created_at = None
+        self._persist_state()
+        self._swap_provider(None, None)
+        logger.info("shell respawn: fresh session")
 
     async def _deliver_reply(
         self, bot: Bot, chat_id: int, response: str, thinking: str

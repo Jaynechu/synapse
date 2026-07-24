@@ -72,15 +72,44 @@ class TgConfig:
     # Marks a delivered note as bridge-sent (vs the resident session's own
     # chat), so her phone can tell them apart at a glance. Empty disables.
     outbox_note_prefix: str = "\U0001f4ee "
-    cortex_wake_state_file: str = ""
-    night_morning_start: str = "06:00"
     timezone: str = "Australia/Melbourne"
+
+    # Cortex shell (T9). false = the resident is a plain relay, exactly as
+    # before: no scheduler task, no silence cycle, no MARROW_CORTEX env.
+    shell_enabled: bool = False
+    shell_id: str = "tg"
+    # Ledger shared with marrow (<dir>/<shell>.json) + kick socket. Keep the
+    # socket path SHORT: macOS caps an AF_UNIX path at 104 bytes.
+    shell_state_dir: str = "~/.config/marrow/state/shells"
+    shell_socket: str = "~/.config/marrow/state/shells/tg.sock"
+    # Minutes of user silence before one rendered note turn is fed in.
+    shell_idle_min: float = 20.0
+    # argv rendering the wakeup note on stdout, e.g.
+    # ["/path/cortex/.venv/bin/python", "-m", "cortex.note_render"].
+    # Empty = the silence cycle logs and skips every round.
+    shell_note_render_cmd: list = field(default_factory=list)
+    shell_note_render_timeout_s: float = 20.0
+    # Machine tag opening a fed turn (must be a marrow [cortex].machine_markers
+    # member, else the fed note reads as a real user message).
+    shell_note_tag: str = "⏳ [NEW ROUND]"
+    # Context occupancy at which the resident is asked to wrap up and is then
+    # respawned fresh. 0 disables the fuse.
+    shell_fuse_tokens: int = 180000
+    shell_fuse_tag: str = "⚙️ [FUSE]"
+    shell_fuse_prompt_text: str = (
+        "Summarise this whole session into one section and append it to handoff.md — "
+        "follow the format and style of the preceding sections. Call "
+        "lie_down(rotate=True) when done."
+    )
 
     # CWD presets
     cwd_presets: dict = field(default_factory=dict)
 
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
     ack_overrides: dict = field(default_factory=dict)
+
+    def shell_socket_path(self) -> Path:
+        return Path(self.shell_socket).expanduser()
 
 
 def load_config(path: Path | None = None) -> TgConfig:
@@ -133,12 +162,32 @@ def load_config(path: Path | None = None) -> TgConfig:
 
     cortex = data.get("cortex") or {}
     if isinstance(cortex, dict):
-        ws = cortex.get("wake_state_file")
-        if isinstance(ws, str):
-            cfg.cortex_wake_state_file = ws
-        ms = cortex.get("morning_start")
-        if isinstance(ms, str) and ms.strip():
-            cfg.night_morning_start = ms
+        se = cortex.get("shell_enabled")
+        if isinstance(se, bool):
+            cfg.shell_enabled = se
+        for key, attr in (
+            ("shell_id", "shell_id"),
+            ("shell_state_dir", "shell_state_dir"),
+            ("shell_socket", "shell_socket"),
+            ("shell_note_tag", "shell_note_tag"),
+            ("fuse_tag", "shell_fuse_tag"),
+            ("fuse_prompt_text", "shell_fuse_prompt_text"),
+        ):
+            v = cortex.get(key)
+            if isinstance(v, str) and v.strip():
+                setattr(cfg, attr, v)
+        im = cortex.get("shell_idle_min")
+        if isinstance(im, (int, float)) and not isinstance(im, bool) and im > 0:
+            cfg.shell_idle_min = float(im)
+        rc = cortex.get("note_render_cmd")
+        if isinstance(rc, list):
+            cfg.shell_note_render_cmd = [str(x) for x in rc]
+        rt = cortex.get("note_render_timeout_s")
+        if isinstance(rt, (int, float)) and not isinstance(rt, bool) and rt > 0:
+            cfg.shell_note_render_timeout_s = float(rt)
+        ft = cortex.get("fuse_tokens")
+        if isinstance(ft, int) and not isinstance(ft, bool) and ft >= 0:
+            cfg.shell_fuse_tokens = ft
 
     core = data.get("core") or {}
     if isinstance(core, dict) and isinstance(core.get("timezone"), str):

@@ -1,5 +1,5 @@
-"""P6 tg bridge wiring: from-her gate drives reply + morning kicks; watch_timeout
-runs in the outbox poll. cortex_kick is mocked — no real cortex.kick spawn."""
+"""P6 tg bridge wiring: from-her gate drives the reply kick; watch_timeout runs
+in the outbox poll. cortex_kick is mocked — no real cortex.kick spawn."""
 
 from __future__ import annotations
 
@@ -48,12 +48,10 @@ def _armed_reply(db, target="tg"):
     conn.close()
 
 
-def _loop(tmp_path, db, chat_id=999, kick_cmd=("py", "-m", "cortex.kick"),
-          wake_state_file="", morning="06:00"):
+def _loop(tmp_path, db, chat_id=999, kick_cmd=("py", "-m", "cortex.kick")):
     cfg = TgConfig(
         data_dir=tmp_path / "tg-data", marrow_db=db, chat_id=chat_id,
-        outbox_kick_cmd=list(kick_cmd), cortex_wake_state_file=wake_state_file,
-        night_morning_start=morning,
+        outbox_kick_cmd=list(kick_cmd),
     )
     return TgLoop(cfg)
 
@@ -205,24 +203,6 @@ def test_other_chat_no_kick(tmp_path, kicks):
 def test_from_her_no_armed_no_kick(tmp_path, kicks):
     db = _db(tmp_path)                             # no armed watch
     loop = _loop(tmp_path, db, chat_id=999)
-    loop._track(_Bot(), 999)
-    assert kicks == []
-
-
-def test_morning_kick_when_night_and_past_start(tmp_path, kicks):
-    db = _db(tmp_path)
-    ws = tmp_path / "wake_state.json"
-    ws.write_text(json.dumps({"mode": "night"}))
-    loop = _loop(tmp_path, db, chat_id=999, wake_state_file=str(ws), morning="00:00")
-    loop._track(_Bot(), 999)
-    assert [k["kind"] for k in kicks] == ["morning"]
-
-
-def test_no_morning_kick_when_flag_absent(tmp_path, kicks):
-    db = _db(tmp_path)
-    ws = tmp_path / "wake_state.json"
-    ws.write_text(json.dumps({"awake": True}))    # day, no night flag
-    loop = _loop(tmp_path, db, chat_id=999, wake_state_file=str(ws), morning="00:00")
     loop._track(_Bot(), 999)
     assert kicks == []
 
