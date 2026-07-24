@@ -4,10 +4,8 @@ in the outbox poll. cortex_kick is mocked — no real cortex.kick spawn."""
 from __future__ import annotations
 
 import asyncio
-import json
 import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
