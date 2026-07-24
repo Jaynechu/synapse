@@ -35,7 +35,7 @@ shell_enabled = false
 # [cortex].shells list for the resident to get the cortex tools.
 shell_id = "tg"
 # Ledger shared with marrow: <dir>/<shell>.json (session_id / next_wake_at /
-# last_note_ts / occupancy). Keep the socket path SHORT — macOS caps an
+# last_note_ts / occupancy / pending_note). Keep the socket path SHORT — macOS caps an
 # AF_UNIX path at 104 bytes. marrow's [cortex].shell_socket must match.
 shell_state_dir = "~/.config/marrow/state/shells"
 shell_socket = "~/.config/marrow/state/shells/tg.sock"

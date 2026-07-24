@@ -12,6 +12,10 @@ Firing feeds one rendered note turn into the resident session; the reply
 streams out to tg like any other turn. Occupancy (same four usage keys cortex
 counts) is persisted after every turn; crossing fuse_tokens feeds the fuse
 prompt and then respawns a fresh session.
+
+A directed kick (marrow writes PENDING_NOTE_KEY into the ledger, then kicks)
+overrides the deadline: the pending text is claimed atomically and fed as that
+round's turn instead of the rendered note.
 """
 
 from __future__ import annotations
@@ -34,6 +38,9 @@ logger = logging.getLogger(__name__)
 # Context occupancy = the LAST assistant usage's four token keys summed (the
 # metric cortex's transcript.window_tokens / watchdog fuse gate use), not a sum
 # across turns: cache_read repeats every turn and would multiply.
+# Ledger key marrow's directed kick writes: text to feed as the next round.
+PENDING_NOTE_KEY = "pending_note"
+
 OCCUPANCY_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -112,6 +119,12 @@ class ShellHost:
         return self._last_user_ts + self._cfg.shell_idle_min * 60.0
 
     def _deadline(self, state: dict) -> float:
+        # A pending direction is due NOW: this is also what saves a kick that
+        # landed while a feed was in flight (the scheduler drops a kick for a
+        # shell whose entry is currently firing) — the re-arm after that feed
+        # sees the text and schedules an immediate round.
+        if str(state.get(PENDING_NOTE_KEY) or "").strip():
+            return self._clock()
         wake = parse_wake_at(state.get("next_wake_at"))
         silence = self._silence_deadline()
         return silence if wake is None else min(silence, wake)
@@ -139,7 +152,7 @@ class ShellHost:
         wake = parse_wake_at(state.get("next_wake_at"))
         if wake is not None and now >= wake:
             self._write_state({"next_wake_at": None})  # one-shot ledger entry
-        await self._feed_note()
+        await self._feed_note(self._take_pending())
         self._last_user_ts = self._clock()  # a fed round re-arms the cycle
         self._arm()
 
@@ -162,8 +175,22 @@ class ShellHost:
             return None
         return (proc.stdout or "").strip() or None
 
-    async def _feed_note(self) -> None:
-        note = await asyncio.to_thread(self._render_note)
+    def _take_pending(self) -> str | None:
+        """Claim a directed kick's text (read+clear under one lock), so a failed
+        feed cannot loop on it and a concurrent write cannot be swallowed."""
+        try:
+            raw = shell_state.take(self._cfg.shell_state_dir, self._shell,
+                                   PENDING_NOTE_KEY)
+        except OSError as e:
+            logger.warning("shell pending note read failed: %s", e)
+            return None
+        text = str(raw or "").strip()
+        return text or None
+
+    async def _feed_note(self, direction: str | None = None) -> None:
+        """One fed round: the directed text when a kick left one, else the
+        rendered wakeup note."""
+        note = direction or await asyncio.to_thread(self._render_note)
         if not note:
             return  # log already emitted; the cycle re-arms regardless
         body = f"{self._cfg.shell_note_tag}\n{note}".strip()

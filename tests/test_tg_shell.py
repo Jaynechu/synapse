@@ -267,6 +267,107 @@ def test_kick_over_the_socket_reaches_the_scheduler(tmp_path, short_sock):
     assert not short_sock.exists()               # socket cleaned up on stop
 
 
+# ── directed kick (T10) ───────────────────────────────────────────────────────
+
+def test_pending_note_is_fed_instead_of_the_rendered_note_and_cleared(tmp_path):
+    """T10: marrow writes pending_note then kicks — the round feeds that text
+    (machine tag kept) and the ledger key is gone afterwards."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    shell_state.write(tmp_path / "shells", "tg", {"pending_note": "go check the diary"})
+
+    asyncio.run(host._fire("tg"))
+
+    assert len(fed) == 1
+    assert fed[0] == "⏳ [NEW ROUND]\ngo check the diary"
+    assert "NOTE BODY" not in fed[0]
+    assert "pending_note" not in shell_state.read(tmp_path / "shells", "tg")
+
+
+def test_pending_note_fires_while_asleep_without_consuming_next_wake_at(tmp_path):
+    """Asleep = a future next_wake_at. The direction fires now; the scheduled
+    wake survives it."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    from datetime import datetime, timezone
+    later = datetime.fromtimestamp(clock.t + 5 * MIN, timezone.utc).isoformat()
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"next_wake_at": later, "pending_note": "wake up"})
+
+    asyncio.run(host._fire("tg"))
+
+    assert fed == ["⏳ [NEW ROUND]\nwake up"]
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st["next_wake_at"] == later
+
+
+def test_kick_lost_during_a_feed_is_recovered_by_the_rearm(tmp_path):
+    """The scheduler drops a kick for a shell whose entry is mid-fire, so a
+    direction written during a feed would be lost — the re-arm schedules it
+    for now instead."""
+    clock = Clock()
+    fed: list[str] = []
+
+    async def _feed(body):
+        fed.append(body)
+        # marrow's directed kick lands while this turn is still streaming.
+        shell_state.write(tmp_path / "shells", "tg", {"pending_note": "late one"})
+        return True
+
+    host, loop, _ = _host(tmp_path, clock, feeds=fed)
+    loop.feed_turn = _feed
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")               # silence round; kick lost mid-feed
+        assert host._scheduler._table["tg"][0] == pytest.approx(clock.t, abs=1)
+        await host._fire("tg")               # next scheduler pass
+
+    asyncio.run(run())
+    assert fed[1] == "⏳ [NEW ROUND]\nlate one"
+
+
+def test_boot_arms_before_the_kick_socket_opens(tmp_path, short_sock):
+    """A kick can never land on an empty table: run() arms, THEN listens."""
+    clock = Clock()
+    host, _loop, _fed = _host(tmp_path, clock, shell_socket=str(short_sock))
+
+    async def run():
+        task = asyncio.create_task(host.run())
+        for _ in range(200):
+            if host._scheduler._server is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert "tg" in host._scheduler._table
+        host.stop()
+        await asyncio.wait_for(task, timeout=2.0)
+
+    asyncio.run(run())
+
+
+def test_blank_pending_note_falls_back_to_the_rendered_note(tmp_path):
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    shell_state.write(tmp_path / "shells", "tg", {"pending_note": "   "})
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert "NOTE BODY" in fed[0]
+
+
+def test_take_reads_and_clears_in_one_pass(tmp_path):
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"pending_note": "x", "session_id": "s"})
+    assert shell_state.take(tmp_path / "shells", "tg", "pending_note") == "x"
+    assert shell_state.take(tmp_path / "shells", "tg", "pending_note") is None
+    assert shell_state.read(tmp_path / "shells", "tg")["session_id"] == "s"
+
+
 # ── token ledger + fuse ───────────────────────────────────────────────────────
 
 def test_after_turn_persists_occupancy_and_session_id(tmp_path):

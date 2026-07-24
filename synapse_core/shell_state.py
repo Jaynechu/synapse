@@ -5,7 +5,7 @@ Protocol copied (never imported — the two repos stay independent): flock on a
 `<shell>.lock` sibling, read-modify-write, atomic replace. Unknown keys written
 by the other side survive a merge here, and vice versa.
 
-Keys: session_id / next_wake_at / last_note_ts / occupancy.
+Keys: session_id / next_wake_at / last_note_ts / occupancy / pending_note.
 """
 
 from __future__ import annotations
@@ -78,6 +78,19 @@ def read(state_dir: str | os.PathLike[str], shell: str) -> dict:
     p = state_path(state_dir, shell)
     with _lock(p):
         return _load(p)
+
+
+def take(state_dir: str | os.PathLike[str], shell: str, key: str):
+    """Read and clear `key` inside ONE critical section, so a value claimed here
+    can never be fed twice nor dropped by a concurrent write. Absent -> None."""
+    p = state_path(state_dir, shell)
+    with _lock(p):
+        d = _load(p)
+        if key not in d:
+            return None
+        value = d.pop(key)
+        _save(p, d)
+        return value
 
 
 def write(state_dir: str | os.PathLike[str], shell: str, data: dict) -> Path:
