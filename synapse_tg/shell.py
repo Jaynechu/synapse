@@ -20,7 +20,8 @@ new local day.
 
 A directed kick (marrow writes PENDING_NOTE_KEY into the ledger, then kicks)
 overrides the deadline: the pending text is claimed atomically and fed as that
-round's turn instead of the rendered note.
+round's turn instead of the rendered note. A lie_down(rotate=True) writes
+ROTATE_KEY the same way and respawns the resident instead of feeding anything.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ logger = logging.getLogger(__name__)
 # across turns: cache_read repeats every turn and would multiply.
 # Ledger key marrow's directed kick writes: text to feed as the next round.
 PENDING_NOTE_KEY = "pending_note"
+# Ledger key marrow's lie_down(rotate=True) writes: end this window now.
+ROTATE_KEY = "rotate_pending"
 # Today's token ledger: finished sessions' finals + the local date they belong
 # to (cortex reads both to render this shell's "Cortex Today" figure).
 TOKENS_BASE_KEY = "tokens_today_base"
@@ -148,11 +151,21 @@ class ShellHost:
         except (TypeError, ValueError):
             return 0
 
-    def _fold_session(self, occ: int) -> None:
-        """Session ends (fuse respawn): its final occupancy joins today's base,
-        so today = base + live occupancy stays whole across respawns."""
+    def fold_session(self, new_sid: str | None = None) -> None:
+        """A window ends: its final occupancy joins today's base, so today =
+        base + live occupancy stays whole however the window ended (fuse
+        respawn, rotate, /clear, /resume, /cwd, cross-channel takeover).
+
+        `new_sid` = the session the incoming provider resumes. Resuming the
+        ledger's own session continues that window -> no fold. Idempotent: the
+        fold zeroes the ledger's occupancy, so a second call adds 0."""
+        state = self._read_state()
+        if new_sid and str(state.get("session_id") or "") == str(new_sid):
+            return
         today = self._local_date()
-        base = self._today_base(self._read_state(), today) + max(occ, 0)
+        occ = state.get("occupancy")
+        occ = occ if isinstance(occ, int) and not isinstance(occ, bool) else 0
+        base = self._today_base(state, today) + max(occ, 0)
         self._write_state({"session_id": None, "occupancy": 0,
                            TOKENS_BASE_KEY: base, TOKENS_DATE_KEY: today})
 
@@ -162,10 +175,12 @@ class ShellHost:
         return self._last_user_ts + self._cfg.shell_idle_min * 60.0
 
     def _deadline(self, state: dict) -> float:
-        # A pending direction is due NOW: this is also what saves a kick that
-        # landed while a feed was in flight (the scheduler drops a kick for a
-        # shell whose entry is currently firing) — the re-arm after that feed
-        # sees the text and schedules an immediate round.
+        # A pending direction or rotate is due NOW: this is also what saves a
+        # kick that landed while a feed was in flight (the scheduler drops a
+        # kick for a shell whose entry is currently firing) — the re-arm after
+        # that feed sees the flag and schedules an immediate round.
+        if state.get(ROTATE_KEY):
+            return self._clock()
         if str(state.get(PENDING_NOTE_KEY) or "").strip():
             return self._clock()
         wake = parse_wake_at(state.get("next_wake_at"))
@@ -192,6 +207,15 @@ class ShellHost:
         if now < self._deadline(state):
             self._arm(state)
             return
+        if self._take_rotate():
+            # lie_down(rotate=True): the resident has written its handoff and
+            # asked to end the window. Same machinery as the fuse respawn minus
+            # the fuse prompt; next_wake_at is left standing, so the fresh
+            # session sleeps until the wake it just booked.
+            logger.info("shell rotate: lie_down(rotate=True) — fresh session")
+            await self._loop.shell_rotate()
+            self._arm()
+            return
         wake = parse_wake_at(state.get("next_wake_at"))
         if wake is not None and now >= wake:
             self._write_state({"next_wake_at": None})  # one-shot ledger entry
@@ -217,6 +241,17 @@ class ShellHost:
                            proc.returncode, (proc.stderr or "")[:200])
             return None
         return (proc.stdout or "").strip() or None
+
+    def _take_rotate(self) -> bool:
+        """Claim marrow's rotate flag (read+clear under one lock), so a rotate
+        can neither fire twice nor be dropped by a concurrent write."""
+        try:
+            raw = shell_state.take(self._cfg.shell_state_dir, self._shell,
+                                   ROTATE_KEY)
+        except OSError as e:
+            logger.warning("shell rotate flag read failed: %s", e)
+            return False
+        return bool(raw)
 
     def _take_pending(self) -> str | None:
         """Claim a directed kick's text (read+clear under one lock), so a failed
@@ -265,8 +300,7 @@ class ShellHost:
             return
         logger.info("shell fuse: occupancy=%d >= %d — feeding fuse prompt", occ, fuse)
         await self._feed(f"{self._cfg.shell_fuse_tag}\n{self._cfg.shell_fuse_prompt_text}".strip())
-        self._loop.shell_respawn()
-        self._fold_session(occ)
+        self._loop.shell_respawn()  # folds today's ledger on the way through
 
 
 def _iso(ts: float) -> str:

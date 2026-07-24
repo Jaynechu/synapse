@@ -6,7 +6,7 @@ Protocol copied (never imported — the two repos stay independent): flock on a
 by the other side survive a merge here, and vice versa.
 
 Keys: session_id / next_wake_at / last_note_ts / occupancy / pending_note /
-tokens_today_base / tokens_date.
+rotate_pending / tokens_today_base / tokens_date.
 """
 
 from __future__ import annotations

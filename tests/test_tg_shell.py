@@ -51,6 +51,39 @@ def stub_typing(monkeypatch):
     monkeypatch.setattr("synapse_tg.loop.TypingAction", _StubTyping)
 
 
+class _NoSpawnProvider:
+    """Stands in for ClaudeCodeProvider at the spawn boundary: keeps every
+    constructor kwarg readable, never starts a cc process."""
+
+    alive = True
+    session_id = None
+    turn_output_capped = False
+
+    def __init__(self, **kwargs) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.extra_env = kwargs.get("extra_env") or {}   # cc.py:162
+
+    def is_alive(self):
+        return True
+
+    def spawn(self):
+        pass
+
+    def cancel(self):
+        pass
+
+    def close(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def stub_provider(monkeypatch):
+    """No cc spawn anywhere in this module, so the real _make_provider /
+    _swap_provider / shell_respawn code paths can run."""
+    monkeypatch.setattr("synapse_tg.loop.ClaudeCodeProvider", _NoSpawnProvider)
+
+
 @pytest.fixture
 def short_sock():
     """A socket path short enough for the macOS 104-byte AF_UNIX cap."""
@@ -95,7 +128,13 @@ def _host(tmp_path, clock, *, feeds=None, **kw):
         return True
 
     loop.feed_turn = _feed
-    loop.shell_respawn = lambda: fed.append("__RESPAWN__")
+    real_respawn = loop.shell_respawn
+
+    def _respawn():                     # records, then runs the real thing
+        fed.append("__RESPAWN__")
+        real_respawn()
+
+    loop.shell_respawn = _respawn
     host = ShellHost(cfg, loop, clock=clock)
     loop.attach_shell(host)
     host._render_note = lambda: "NOTE BODY"
@@ -475,6 +514,146 @@ def test_respawn_drops_session_and_keeps_queued_user_messages(tmp_path):
     assert loop._state.session_id is None
     assert spawned == [None]                     # fresh, no --resume sid
     assert loop._buffer.flush() == "hello from mid-fuse"
+
+
+# ── every window end folds, not just the fuse ─────────────────────────────────
+
+def _turn(host, loop, occ, sid="sess-1"):
+    loop._state.session_id = sid
+    loop._state.last_assistant_usage = {"input_tokens": occ}
+    asyncio.run(host.after_turn())
+
+
+def test_manual_session_reset_folds_the_closing_occupancy(tmp_path):
+    """/clear, /cwd and the cross-channel takeover all end the window through
+    the registry's swap_provider — the tokens they burnt still count today."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_fuse_tokens=0)
+    _turn(host, loop, 150)
+    assert shell_state.read(tmp_path / "shells", "tg")["occupancy"] == 150
+
+    loop._state.session_id = None                    # what the registry does
+    loop._registry._ctx.swap_provider("opus", None)  # the real reset path
+
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st["tokens_today_base"] == 150 and st["occupancy"] == 0
+    assert fed == []                                 # no fuse prompt
+
+
+def test_resume_of_the_same_session_is_not_a_window_end(tmp_path):
+    """/model respawns cc on the SAME sid — one window continuing, so folding
+    it would count that context twice."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_fuse_tokens=0)
+    _turn(host, loop, 150, sid="sess-1")
+
+    loop._registry._ctx.swap_provider("sonnet", "sess-1")
+
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st.get("tokens_today_base", 0) == 0 and st["occupancy"] == 150
+
+
+def test_resume_of_a_different_session_folds(tmp_path):
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_fuse_tokens=0)
+    _turn(host, loop, 150, sid="sess-1")
+
+    loop._registry._ctx.swap_provider("opus", "sess-2")
+
+    assert shell_state.read(tmp_path / "shells", "tg")["tokens_today_base"] == 150
+
+
+def test_fold_is_idempotent_when_two_paths_overlap(tmp_path):
+    """Two termination paths on one window (e.g. close then swap) must not
+    double-count: the fold zeroes the occupancy it consumed."""
+    clock = Clock()
+    host, loop, _fed = _host(tmp_path, clock, shell_fuse_tokens=0)
+    _turn(host, loop, 150)
+
+    host.fold_session(None)
+    host.fold_session(None)
+
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st["tokens_today_base"] == 150 and st["occupancy"] == 0
+
+
+def test_crash_respawn_resumes_the_same_window_without_folding(tmp_path):
+    clock = Clock()
+    host, loop, _fed = _host(tmp_path, clock, shell_fuse_tokens=0)
+    _turn(host, loop, 150, sid="sess-1")
+
+    loop._respawn()                                  # provider died mid-turn
+
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st.get("tokens_today_base", 0) == 0 and st["occupancy"] == 150
+
+
+def test_plain_relay_resident_never_touches_a_ledger(tmp_path):
+    loop = TgLoop(_cfg(tmp_path))                    # no attach_shell
+    loop._make_provider()
+    assert not (tmp_path / "shells").exists()
+
+
+# ── lie_down(rotate=True) from the shell ──────────────────────────────────────
+
+def test_rotate_pending_respawns_without_feeding_anything(tmp_path):
+    """marrow flags rotate_pending + kicks: the round ends the window instead
+    of feeding a turn — no note, no fuse prompt. The wake it booked stands."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock)
+    d = tmp_path / "shells"
+    _turn(host, loop, 150)
+    loop._buffer.add("said mid-rotate")
+    from datetime import datetime, timezone
+    later = datetime.fromtimestamp(clock.t + 5 * MIN, timezone.utc).isoformat()
+    shell_state.write(d, "tg", {"rotate_pending": True, "next_wake_at": later})
+
+    asyncio.run(host._fire("tg"))
+
+    assert fed == ["__RESPAWN__"]                    # no NOTE BODY, no FUSE
+    st = shell_state.read(d, "tg")
+    assert "rotate_pending" not in st                # claimed once
+    assert st["next_wake_at"] == later               # the booked wake survives
+    assert st["tokens_today_base"] == 150 and st["occupancy"] == 0
+    assert loop._state.session_id is None
+    assert loop._buffer.flush() == "said mid-rotate"  # rides into the new session
+    assert host._scheduler._table["tg"][0] == pytest.approx(clock.t + 5 * MIN, abs=1)
+
+
+def test_rotate_with_zero_minutes_wakes_the_fresh_session_at_once(tmp_path):
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock)
+    d = tmp_path / "shells"
+    from datetime import datetime, timezone
+    now_iso = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
+    shell_state.write(d, "tg", {"rotate_pending": True, "next_wake_at": now_iso})
+
+    async def run():
+        await host._fire("tg")       # rotate
+        await host._fire("tg")       # the re-armed immediate wake
+
+    asyncio.run(run())
+    assert fed[0] == "__RESPAWN__"
+    assert fed[1].startswith("⏳ [NEW ROUND]") and "NOTE BODY" in fed[1]
+
+
+def test_rotate_waits_for_an_in_flight_turn(tmp_path):
+    """A rotate kick can land mid-turn; the respawn must not cut the stream."""
+    cfg = _cfg(tmp_path)
+    loop = TgLoop(cfg)
+    loop._state.session_id = "old-sid"
+
+    async def run():
+        await loop._lock.acquire()                   # a turn is streaming
+        task = asyncio.create_task(loop.shell_rotate())
+        await asyncio.sleep(0)
+        mid = loop._state.session_id
+        loop._lock.release()
+        await task
+        return mid
+
+    assert asyncio.run(run()) == "old-sid"           # untouched while locked
+    assert loop._state.session_id is None
 
 
 # ── feed_turn: the fed round's reply ships to tg like any other turn ──────────

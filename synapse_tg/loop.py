@@ -284,9 +284,24 @@ class TgLoop:
         )
         return Registry(ctx)
 
+    def _shell_fold(self, resume_sid: str | None) -> None:
+        """Window-end choke point for the cortex shell's today ledger. Every
+        provider spawn — fuse respawn, rotate, /clear, /resume, /cwd,
+        cross-channel takeover, crash respawn — goes through _make_provider, so
+        folding here catches them all; resuming the ledger's own session is a
+        no-op, and the fold itself is idempotent. No-op for a plain relay
+        resident; never raises into the turn path."""
+        if self._shell is None:
+            return
+        try:
+            self._shell.fold_session(resume_sid)
+        except Exception as e:  # noqa: BLE001 — ledger bookkeeping is best-effort
+            logger.warning("shell fold_session failed: %s", e)
+
     def _make_provider(self) -> ClaudeCodeProvider:
         cfg = self._cfg
         state = self._state
+        self._shell_fold(state.session_id)
         return ClaudeCodeProvider(
             model=state.model,
             resume_sid=state.session_id,
@@ -1156,6 +1171,14 @@ class TgLoop:
         self._persist_state()
         self._swap_provider(None, None)
         logger.info("shell respawn: fresh session")
+
+    async def shell_rotate(self) -> None:
+        """lie_down(rotate=True) from the shell: let any in-flight turn finish,
+        then drop the session for a fresh one. The lock is what the fuse path
+        gets for free by respawning after its turn — a rotate kick can land
+        mid-turn."""
+        async with self._lock:
+            self.shell_respawn()
 
     async def _deliver_reply(
         self, bot: Bot, chat_id: int, response: str, thinking: str
