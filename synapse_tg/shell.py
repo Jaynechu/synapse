@@ -13,6 +13,11 @@ streams out to tg like any other turn. Occupancy (same four usage keys cortex
 counts) is persisted after every turn; crossing fuse_tokens feeds the fuse
 prompt and then respawns a fresh session.
 
+The ledger also carries today's token total the way cortex's cli shell counts
+it: tokens_today_base (finished sessions' final occupancies, folded in at every
+respawn) + the live occupancy, with tokens_date rolling the base back to 0 on a
+new local day.
+
 A directed kick (marrow writes PENDING_NOTE_KEY into the ledger, then kicks)
 overrides the deadline: the pending text is claimed atomically and fed as that
 round's turn instead of the rendered note.
@@ -25,6 +30,7 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from synapse_core import shell_state
 from synapse_core.scheduler import Scheduler
@@ -40,6 +46,10 @@ logger = logging.getLogger(__name__)
 # across turns: cache_read repeats every turn and would multiply.
 # Ledger key marrow's directed kick writes: text to feed as the next round.
 PENDING_NOTE_KEY = "pending_note"
+# Today's token ledger: finished sessions' finals + the local date they belong
+# to (cortex reads both to render this shell's "Cortex Today" figure).
+TOKENS_BASE_KEY = "tokens_today_base"
+TOKENS_DATE_KEY = "tokens_date"
 
 OCCUPANCY_KEYS = (
     "input_tokens",
@@ -74,11 +84,21 @@ def parse_wake_at(raw) -> float | None:
     return dt.timestamp()
 
 
+def _tzinfo(name: str):
+    """Configured display timezone; unknown name -> None (system local)."""
+    try:
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001 — a bad tz name must not kill the bridge
+        logger.warning("shell: unknown timezone %r — using system local", name)
+        return None
+
+
 class ShellHost:
     """Owns the tg shell's timing, ledger and fuse. One per bridge process."""
 
     def __init__(self, cfg: "TgConfig", loop: "TgLoop", *, clock=None) -> None:
         self._cfg = cfg
+        self._tz = _tzinfo(cfg.timezone)
         self._loop = loop
         self._shell = cfg.shell_id
         self._clock = clock or (lambda: datetime.now(timezone.utc).timestamp())
@@ -112,6 +132,29 @@ class ShellHost:
             shell_state.write(self._cfg.shell_state_dir, self._shell, data)
         except OSError as e:
             logger.warning("shell state write failed: %s", e)
+
+    # --- today ledger ----------------------------------------------------
+
+    def _local_date(self) -> str:
+        return datetime.fromtimestamp(self._clock(), self._tz).strftime("%Y-%m-%d")
+
+    def _today_base(self, state: dict, today: str) -> int:
+        """Finished sessions' final occupancies for `today`. A ledger stamped
+        with any other local date belongs to a past day -> base rolls to 0."""
+        if str(state.get(TOKENS_DATE_KEY) or "") != today:
+            return 0
+        try:
+            return max(int(state.get(TOKENS_BASE_KEY) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _fold_session(self, occ: int) -> None:
+        """Session ends (fuse respawn): its final occupancy joins today's base,
+        so today = base + live occupancy stays whole across respawns."""
+        today = self._local_date()
+        base = self._today_base(self._read_state(), today) + max(occ, 0)
+        self._write_state({"session_id": None, "occupancy": 0,
+                           TOKENS_BASE_KEY: base, TOKENS_DATE_KEY: today})
 
     # --- timing ---------------------------------------------------------
 
@@ -210,9 +253,12 @@ class ShellHost:
     async def after_turn(self) -> None:
         """Called by the loop once a resident turn has been delivered."""
         occ = occupancy(self._loop._state.last_assistant_usage)
+        today = self._local_date()
         self._write_state({
             "session_id": self._loop._state.session_id,
             "occupancy": occ,
+            TOKENS_BASE_KEY: self._today_base(self._read_state(), today),
+            TOKENS_DATE_KEY: today,
         })
         fuse = self._cfg.shell_fuse_tokens
         if self._feeding or fuse <= 0 or occ < fuse:
@@ -220,7 +266,7 @@ class ShellHost:
         logger.info("shell fuse: occupancy=%d >= %d — feeding fuse prompt", occ, fuse)
         await self._feed(f"{self._cfg.shell_fuse_tag}\n{self._cfg.shell_fuse_prompt_text}".strip())
         self._loop.shell_respawn()
-        self._write_state({"session_id": None, "occupancy": 0})
+        self._fold_session(occ)
 
 
 def _iso(ts: float) -> str:

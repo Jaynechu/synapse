@@ -379,6 +379,7 @@ def test_after_turn_persists_occupancy_and_session_id(tmp_path):
     asyncio.run(host.after_turn())
     st = shell_state.read(tmp_path / "shells", "tg")
     assert st["occupancy"] == 7 and st["session_id"] == "sess-1"
+    assert st["tokens_today_base"] == 0 and st["tokens_date"] == host._local_date()
     assert fed == []
 
 
@@ -393,6 +394,52 @@ def test_occupancy_over_fuse_feeds_prompt_then_respawns(tmp_path):
     assert fed[1] == "__RESPAWN__"
     st = shell_state.read(tmp_path / "shells", "tg")
     assert st["occupancy"] == 0 and "session_id" not in st
+
+
+# ── today's token ledger (tokens_today_base / tokens_date) ────────────────────
+
+def test_respawn_folds_the_closing_occupancy_into_todays_base(tmp_path):
+    """Two fuse respawns: today's base accumulates both sessions' finals, so
+    cortex renders today = base + live occupancy."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_fuse_tokens=100)
+    d = tmp_path / "shells"
+    for occ in (150, 120):
+        loop._state.last_assistant_usage = {"input_tokens": occ}
+        asyncio.run(host.after_turn())
+    st = shell_state.read(d, "tg")
+    assert st["tokens_today_base"] == 270 and st["occupancy"] == 0
+    assert st["tokens_date"] == host._local_date()
+
+
+def test_date_rollover_resets_the_base(tmp_path):
+    """A base stamped with a past local date is yesterday's — it never adds to
+    today, neither on a plain turn nor on the fold."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_fuse_tokens=100)
+    d = tmp_path / "shells"
+    shell_state.write(d, "tg", {"tokens_today_base": 500_000,
+                                "tokens_date": "1999-01-01"})
+    loop._state.last_assistant_usage = {"input_tokens": 10}
+    asyncio.run(host.after_turn())                     # under fuse: plain write
+    st = shell_state.read(d, "tg")
+    assert st["tokens_today_base"] == 0 and st["tokens_date"] == host._local_date()
+
+    loop._state.last_assistant_usage = {"input_tokens": 150}
+    asyncio.run(host.after_turn())                     # fuse: fold onto 0
+    assert shell_state.read(d, "tg")["tokens_today_base"] == 150
+
+
+def test_local_date_follows_the_configured_timezone(tmp_path):
+    """Same instant, two zones, two dates — the date comes from
+    [core].timezone, not the host machine."""
+    ts = 1_767_222_000.0                               # 2026-01-01 03:00 UTC
+    mel = ShellHost(_cfg(tmp_path, timezone="Australia/Melbourne"),
+                    TgLoop(_cfg(tmp_path)), clock=Clock(ts))
+    utc = ShellHost(_cfg(tmp_path, timezone="UTC"),
+                    TgLoop(_cfg(tmp_path)), clock=Clock(ts))
+    assert mel._local_date() == "2026-01-01"
+    assert utc._local_date() == "2025-12-31"
 
 
 def test_fuse_disabled_at_zero(tmp_path):
