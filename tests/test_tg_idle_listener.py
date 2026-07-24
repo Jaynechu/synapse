@@ -137,6 +137,69 @@ def test_idle_unsolicited_delivered_without_inbound(tmp_path):
     assert bot.typing >= 1
 
 
+class NoRecvProvider(QueueProvider):
+    """Provider whose recv must never be entered (blocking drain forbidden)."""
+
+    def recv(self, first_line=None):
+        raise AssertionError("recv entered for a non-turn first line")
+
+
+def test_init_handshake_does_not_start_typing_or_drain(tmp_path):
+    """Every spawn (fresh, --resume, shell_respawn) emits system{init} first.
+    The listener must consume it without typing and without entering recv
+    (which would block idle_hard_s then SIGKILL the fresh process)."""
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    loop._bot = bot
+    loop._pending_chat_id = 123
+    prov = NoRecvProvider(
+        [json.dumps({"type": "system", "subtype": "init", "session_id": "sid-new"})]
+    )
+    loop._provider = prov
+    asyncio.run(loop._listen_once())
+    assert bot.typing == 0
+    assert bot.sent == []
+    assert _StubTyping._instances == []
+    assert loop._state.session_id == "sid-new"
+    assert prov.alive is True
+    # Next iteration keeps working (loop stayed healthy).
+    asyncio.run(loop._listen_once())
+    assert bot.sent == []
+
+
+def test_non_turn_first_line_consumed_not_drained(tmp_path):
+    """A stray non-task_notification line (or garbage) is consumed, never
+    treated as the start of an unsolicited turn."""
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    loop._bot = bot
+    loop._pending_chat_id = 123
+    loop._provider = NoRecvProvider(
+        ["not json at all", json.dumps({"type": "stream_event"})]
+    )
+    asyncio.run(loop._listen_once())
+    asyncio.run(loop._listen_once())
+    assert bot.typing == 0
+    assert bot.sent == []
+
+
+def test_handshake_before_unsolicited_turn_still_delivers(tmp_path):
+    """A handshake queued ahead of a real unsolicited turn must not eat it."""
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    loop._bot = bot
+    loop._pending_chat_id = 123
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "sid-new"})
+    ] + _turn_lines("bg answer")
+    loop._provider = QueueProvider(lines)
+    asyncio.run(loop._listen_once())  # consumes the handshake only
+    assert bot.sent == []
+    asyncio.run(loop._listen_once())  # now the real turn
+    assert [m["text"] for m in bot.sent] == ["bg answer"]
+    assert bot.typing >= 1
+
+
 def test_idle_none_poll_is_noop(tmp_path):
     loop = _loop(tmp_path)
     bot = FakeBot()

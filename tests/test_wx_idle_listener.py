@@ -154,6 +154,62 @@ def test_idle_unsolicited_delivered_without_inbound(tmp_path):
     assert loop._ilink.typing >= 1
 
 
+class NoRecvProvider(QueueProvider):
+    """Provider whose recv must never be entered (blocking drain forbidden)."""
+
+    def recv(self, first_line=None):
+        raise AssertionError("recv entered for a non-turn first line")
+
+
+def test_init_handshake_does_not_start_typing_or_drain(tmp_path):
+    """Every spawn (fresh or --resume) emits system{init} first. The listener
+    must consume it without typing and without entering recv (which would block
+    idle_hard_s then SIGKILL the fresh process)."""
+    loop = _loop(tmp_path)
+    prov = NoRecvProvider(
+        [json.dumps({"type": "system", "subtype": "init",
+                     "session_id": "sid-new", "model": "opus"})]
+    )
+    loop._provider = prov
+    loop._listen_once()
+    assert loop._ilink.typing == 0
+    assert loop._ilink.sent == []
+    assert loop._listen_typing is None
+    # State still mirrored from the handshake; provider stays healthy.
+    assert loop.state.session_id == "sid-new"
+    assert loop.state.model == "opus"
+    assert prov.alive is True
+    # Next iteration keeps working (loop stayed healthy).
+    loop._listen_once()
+    assert loop._ilink.sent == []
+
+
+def test_non_turn_first_line_consumed_not_drained(tmp_path):
+    """A stray non-task_notification line (or garbage) is consumed, never
+    treated as the start of an unsolicited turn."""
+    loop = _loop(tmp_path)
+    prov = NoRecvProvider(["not json at all",
+                           json.dumps({"type": "stream_event"})])
+    loop._provider = prov
+    loop._listen_once()
+    loop._listen_once()
+    assert loop._ilink.typing == 0
+    assert loop._ilink.sent == []
+
+
+def test_handshake_before_unsolicited_turn_still_delivers(tmp_path):
+    """A handshake queued ahead of a real unsolicited turn must not eat it."""
+    loop = _loop(tmp_path)
+    lines = [json.dumps({"type": "system", "subtype": "init",
+                         "session_id": "sid-new"})] + _turn_lines("bg answer")
+    loop._provider = QueueProvider(lines)
+    loop._listen_once()  # consumes the handshake only
+    assert loop._ilink.sent == []
+    loop._listen_once()  # now the real turn
+    assert [s[2] for s in loop._ilink.sent] == ["bg answer"]
+    assert loop._ilink.typing >= 1
+
+
 def test_idle_none_poll_is_noop(tmp_path):
     loop = _loop(tmp_path)
     loop._provider = QueueProvider([])  # poll_line -> None

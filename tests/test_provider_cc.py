@@ -192,6 +192,21 @@ def test_recv_raises_provider_dead_on_eof_without_result():
             list(p.recv())
 
 
+def test_recv_death_marks_provider_not_alive():
+    """Death during recv must clear .alive like poll_line's EOF path — callers
+    (idle listener liveness gate) read raw .alive."""
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "sid"}) + "\n",
+    ]
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen(lines)
+        p = _provider()
+        p.spawn()
+        with pytest.raises(ProviderDeadError):
+            list(p.recv())
+        assert p.alive is False
+
+
 def test_close_three_stage_shutdown_order():
     with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
         fake = _make_fake_popen([])

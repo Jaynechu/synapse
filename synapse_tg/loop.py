@@ -518,8 +518,12 @@ class TgLoop:
                 logger.info("idle listener: provider EOF — marked dead, awaiting respawn")
                 provider.alive = False
                 return
-            # A line means a full turn is arriving unsolicited. Target the last
-            # real chat; if none, drop with a warning (never crash).
+            # Classify BEFORE reacting: only a line whose event opens a genuine
+            # unsolicited turn may start typing and enter the blocking drain.
+            if self._consume_non_turn_line(line):
+                return
+            # A real unsolicited turn is arriving. Target the last real chat;
+            # if none, drop with a warning (never crash).
             if bot is None or chat_id is None:
                 logger.warning("idle listener: unsolicited turn with no chat target — dropped")
                 # Still drain the turn so it doesn't rot in the queue.
@@ -532,20 +536,59 @@ class TgLoop:
             finally:
                 typing.stop()
 
+    def _consume_non_turn_line(self, line: str) -> bool:
+        """Classify a first polled line; True when it opens NO turn and was
+        consumed here (no typing, no blocking recv).
+
+        Every cc spawn (fresh or --resume, e.g. shell_respawn / /model) emits a
+        system{init} handshake as its first stdout line. It carries no result
+        event, so feeding it to _collect_turn blocks recv until idle_hard_s and
+        then SIGKILLs the fresh process — while typing runs the whole time.
+        Handle the handshake's state here instead; only a task_notification-first
+        line is a real unsolicited turn."""
+        stripped = line.strip()
+        if not stripped:
+            return True
+        try:
+            ev = json.loads(stripped)
+        except ValueError:
+            logger.warning("idle listener: skip non-json line: %s", line[:120])
+            return True
+        if not isinstance(ev, dict):
+            logger.warning("idle listener: skip non-object line: %s", line[:120])
+            return True
+        if _is_unsolicited_first_event(ev):
+            return False
+        if ev.get("type") == "system" and ev.get("subtype") == "init":
+            self._handle_init_event(ev)
+            logger.info(
+                "idle listener: consumed spawn handshake (sid=%s)",
+                ev.get("session_id"),
+            )
+        else:
+            logger.warning(
+                "idle listener: dropped non-turn first event (type=%s subtype=%s)",
+                ev.get("type"), ev.get("subtype"),
+            )
+        return True
+
     async def _drain_unsolicited(
         self, bot: Bot, chat_id: int, typing: TypingAction, first_line: str
     ) -> None:
         """Collect and deliver the unsolicited turn opened by first_line, plus
-        any consecutive back-to-back turns already queued behind it."""
+        any consecutive back-to-back turns already queued behind it. Each queued
+        line is classified too: a non-turn line (spawn handshake) is consumed
+        without entering the blocking drain."""
         count = 0
         line: str | None = first_line
         while line is not None:
-            turn = await self._collect_turn(typing, first_line=line)
-            if turn is not None:
-                text, thinking, _unsolicited = turn
-                count += 1
-                self._maybe_storm_alert(count)
-                await self._deliver_reply(bot, chat_id, text, thinking)
+            if not self._consume_non_turn_line(line):
+                turn = await self._collect_turn(typing, first_line=line)
+                if turn is not None:
+                    text, thinking, _unsolicited = turn
+                    count += 1
+                    self._maybe_storm_alert(count)
+                    await self._deliver_reply(bot, chat_id, text, thinking)
             # Peek for the next queued turn without blocking on idle liveness.
             provider = self._provider
             if provider is None or not getattr(provider, "alive", False):

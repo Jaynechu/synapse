@@ -406,8 +406,11 @@ class ClaudeCodeProvider(Provider):
                 self.cancel()
                 return
         # A cap-interrupted turn returns cleanly above; any other missing
-        # result is a genuine mid-turn death.
+        # result is a genuine mid-turn death. Mark dead like poll_line's EOF
+        # path — callers gate on raw .alive and must not see a dead process
+        # as alive.
         if not saw_result:
+            self.alive = False
             raise ProviderDeadError("subprocess died during recv")
 
     def _turn_output_breached(self, ev: dict[str, Any]) -> bool:
