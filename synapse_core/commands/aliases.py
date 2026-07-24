@@ -5,13 +5,17 @@ from __future__ import annotations
 import re
 
 MODEL_ALIASES: dict[str, str] = {
-    # Opus aliases always pin the 1M-context variant — Lumi never wants the
-    # 200k default. Sonnet/Haiku have no 1M tier; aliases stay base.
+    # Older opus aliases pin the 1M-context variant — Lumi never wants the
+    # 200k default there. Opus 5 is native 1M context, so its aliases carry
+    # no "[1m]" suffix (also invalid on full model ids in cc — only alias
+    # forms like "opus[1m]" accept it). Sonnet/Haiku have no 1M tier either.
     "4.6": "claude-opus-4-6[1m]",
     "4.7": "claude-opus-4-7[1m]",
     "4.8": "claude-opus-4-8[1m]",
     "5": "claude-fable-5",
-    "opus": "claude-opus-4-8[1m]",
+    "5o": "claude-opus-5",
+    "5f": "claude-fable-5",
+    "opus": "claude-opus-5",
     "sonnet": "sonnet",
     "haiku": "haiku",
     "fable": "claude-fable-5",
@@ -25,6 +29,7 @@ MODEL_NAMES: dict[str, str] = {
     "claude-opus-4-6": "Opus 4.6",
     "claude-opus-4-7": "Opus 4.7",
     "claude-opus-4-8": "Opus 4.8",
+    "claude-opus-5": "Opus 5",
     "sonnet": "Sonnet",
     "haiku": "Haiku",
     "claude-fable-5": "Fable 5",

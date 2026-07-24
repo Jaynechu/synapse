@@ -167,7 +167,10 @@ class TgLoop:
         self._shell = shell
 
     def _load_state(self) -> BridgeState:
-        state = BridgeState(model=self._cfg.default_model)
+        # default_model empty (no fixed default) → seed None, not "", so it
+        # matches the "no model known yet" sentinel used everywhere else
+        # (provider skips --model, display_name shows "?").
+        state = BridgeState(model=self._cfg.default_model or None)
         saved = bridge_state_store.load(self._state_path)
         for k, v in saved.items():
             if hasattr(state, k):

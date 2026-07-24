@@ -26,8 +26,14 @@ def test_resolve_alias_sonnet() -> None:
     assert resolve_model("sonnet") == MODEL_ALIASES["sonnet"]
 
 
-def test_resolve_alias_opus_is_4_8_1m() -> None:
+def test_resolve_alias_opus_is_5() -> None:
+    assert resolve_model("opus") == "claude-opus-5"
     assert resolve_model("opus") == MODEL_ALIASES["opus"]
+
+
+def test_resolve_alias_5o_and_5f() -> None:
+    assert resolve_model("5o") == "claude-opus-5"
+    assert resolve_model("5f") == "claude-fable-5"
 
 
 def test_resolve_alias_haiku_dated() -> None:
@@ -72,6 +78,10 @@ def test_display_name_known() -> None:
 
 def test_display_name_fable() -> None:
     assert display_name("claude-fable-5") == MODEL_NAMES["claude-fable-5"]
+
+
+def test_display_name_opus_5() -> None:
+    assert display_name("claude-opus-5") == "Opus 5"
 
 
 def test_display_name_known_with_context_suffix() -> None:

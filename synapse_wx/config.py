@@ -58,8 +58,10 @@ class Config:
     session_get_effort_command: str = "mw get-session-effort --sid {sid}"
     # created_at resolver: prints ISO timestamp for a sid, or empty on miss.
     session_created_command: str = "mw get-session-created --sid {sid}"
-    # B1: model /clear lands on (canonical id, "[1m]" suffix kept).
-    clear_default_model: str = "claude-opus-4-6[1m]"
+    # B1: model /clear lands on (canonical id, "[1m]" suffix kept). Empty =
+    # no fixed default — /clear follows whatever model the session was
+    # already on (registry.py falls back to `state.model`).
+    clear_default_model: str = ""
     # cc transcript dir for /resume jsonl fallback (and B7 history replay).
     cc_projects_dir: str = ""  # empty → ~/.claude/projects
     # B8: marrow.db path for the mm- / mm+ audit_log writer. Empty = bridge

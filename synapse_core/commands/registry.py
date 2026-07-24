@@ -146,7 +146,10 @@ class CommandContext:
     resolve_resume_model: Callable[[str], str | None] = field(
         default_factory=lambda: lambda _sid: None
     )
-    clear_default_model: str = "claude-opus-4-6[1m]"
+    # Empty = no fixed default; /clear (and the implicit-clear paths below)
+    # fall back to `state.model`, i.e. follow whatever the session was
+    # already on instead of resetting to a pinned model.
+    clear_default_model: str = ""
     # B6: recent-session picker for empty /resume.
     list_recent_sessions: Callable[[], list[dict]] = field(
         default_factory=lambda: lambda: []
@@ -505,7 +508,9 @@ class Registry:
             model = state.model
         else:
             branch = "clear_default"
-            model = self._ctx.clear_default_model
+            # Empty clear_default_model → None, not "", so it matches the
+            # "no model known" sentinel used everywhere else.
+            model = self._ctx.clear_default_model or None
         logger.info(
             "/resume sid=%s model=%s branch=%s", sid[:8], model, branch
         )

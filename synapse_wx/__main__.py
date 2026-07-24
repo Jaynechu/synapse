@@ -168,7 +168,9 @@ def main() -> int:
     # Fallback: a fresh persist file (or one written before any /swap) has
     # model=null; without this, provider_factory passes no --model and cc
     # uses its own default (currently opus-4-7), bypassing the WeChat default.
-    if state.model is None:
+    # cfg.clear_default_model empty (no fixed default) must NOT blank out a
+    # freshly-None state.model into "" — leave it None so cc picks its own.
+    if state.model is None and cfg.clear_default_model:
         state.model = cfg.clear_default_model
 
     def _save_state() -> None:
