@@ -66,7 +66,6 @@ class TgConfig:
 
     # Watch + kick (P6). kick_cmd = cortex.kick launcher (venv python + module),
     # e.g. ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = watch/kick off.
-    # Morning flag-pull reads the cortex night flag + morning_start.
     outbox_kick_cmd: list = field(default_factory=list)
     outbox_kick_text_chars: int = 200
     outbox_receipt_text_chars: int = 120

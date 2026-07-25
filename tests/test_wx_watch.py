@@ -1,10 +1,9 @@
-"""P6 wx bridge wiring: from-her gate (from_wxid == target) drives reply +
-morning kicks; watch_timeout runs in _outbox_scan. cortex_kick is mocked — no
+"""P6 wx bridge wiring: from-her gate (from_wxid == target) drives the reply
+kick; watch_timeout runs in _outbox_scan. cortex_kick is mocked — no
 real cortex.kick spawn."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,15 +66,13 @@ def _armed_reply(db, target="wx"):
 
 
 def _loop(tmp_path, db, ilink=None, *, target_wxid="wxid_her",
-          kick_cmd=("py", "-m", "cortex.kick"), wake_state_file="", morning="06:00",
-          wallclock=None):
+          kick_cmd=("py", "-m", "cortex.kick"), wallclock=None):
     if ilink is None:
         ilink = FakeILink()
     clock = FakeClock()
     cfg = Config(
         marrow_db_path=db, target_wxid=target_wxid,
-        outbox_kick_cmd=list(kick_cmd), cortex_wake_state_file=wake_state_file,
-        night_morning_start=morning,
+        outbox_kick_cmd=list(kick_cmd),
     )
     loop = MainLoop(
         ilink=ilink, provider_factory=EchoProvider, state=BridgeState(),
@@ -239,24 +236,6 @@ def test_tick_other_sender_no_kick(tmp_path, kicks):
     ilink = FakeILink(msgs=[{"from_wxid": "wxid_other", "text": "hi"}])
     loop, _ = _loop(tmp_path, db, ilink)
     loop.tick()
-    assert kicks == []
-
-
-def test_morning_kick_when_night_and_past_start(tmp_path, kicks):
-    db = _db(tmp_path)
-    ws = tmp_path / "wake_state.json"
-    ws.write_text(json.dumps({"mode": "night"}))
-    loop, _ = _loop(tmp_path, db, FakeILink(), wake_state_file=str(ws), morning="00:00")
-    loop._inbound_from_her()
-    assert [k["kind"] for k in kicks] == ["morning"]
-
-
-def test_no_morning_kick_flag_absent(tmp_path, kicks):
-    db = _db(tmp_path)
-    ws = tmp_path / "wake_state.json"
-    ws.write_text(json.dumps({"awake": True}))
-    loop, _ = _loop(tmp_path, db, FakeILink(), wake_state_file=str(ws), morning="00:00")
-    loop._inbound_from_her()
     assert kicks == []
 
 

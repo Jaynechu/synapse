@@ -16,7 +16,6 @@ reply and a timeout racing the same row produce exactly one winner -> one kick:
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shlex
@@ -223,33 +222,3 @@ def claim_timeouts(db_path, channel: str, timeout_min_default=None) -> list[dict
         return won
     finally:
         conn.close()
-
-
-def night_mode(wake_state_file) -> bool:
-    """True when cortex wake_state.json carries mode=='night'. Absent / missing
-    file -> False. The flag lifecycle is P8; this only reads it."""
-    if not wake_state_file:
-        return False
-    p = Path(wake_state_file).expanduser()
-    try:
-        if not p.is_file():
-            return False
-        d = json.loads(p.read_text())
-        return str(d.get("mode") or "") == "night"
-    except (OSError, ValueError):
-        return False
-
-
-def past_morning_start(morning_start: str, tz_name: str) -> bool:
-    """True when local time is at/after `morning_start` ("HH:MM")."""
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    try:
-        hh, mm = (int(x) for x in str(morning_start or "06:00").split(":"))
-    except (ValueError, TypeError):
-        hh, mm = 6, 0
-    try:
-        now = datetime.now(ZoneInfo(tz_name or "Australia/Melbourne"))
-    except Exception:
-        now = datetime.now()
-    return (now.hour, now.minute) >= (hh, mm)

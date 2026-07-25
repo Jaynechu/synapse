@@ -5,7 +5,6 @@ mocked — never launch a real cortex.kick."""
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -350,19 +349,3 @@ def test_kick_reply_carries_truncated_text(monkeypatch):
     assert "--text" in argv
     sent_text = argv[argv.index("--text") + 1]
     assert sent_text == "x" * 200          # truncated to text_chars
-
-
-# ── night flag / morning_start readers ────────────────────────────────────
-
-def test_night_mode(tmp_path):
-    p = tmp_path / "wake_state.json"
-    p.write_text(json.dumps({"mode": "night"}))
-    assert cortex_kick.night_mode(str(p)) is True
-    p.write_text(json.dumps({"awake": True}))
-    assert cortex_kick.night_mode(str(p)) is False
-    assert cortex_kick.night_mode(str(tmp_path / "absent.json")) is False
-
-
-def test_past_morning_start():
-    assert cortex_kick.past_morning_start("00:00", "Australia/Melbourne") is True
-    assert cortex_kick.past_morning_start("23:59", "Australia/Melbourne") is False

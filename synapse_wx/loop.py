@@ -452,9 +452,8 @@ class MainLoop:
         )
 
     def _inbound_from_her(self, text: str = "", media_type: str = "") -> None:
-        """Her message landed on wx -> claim any armed watches on wx (one kick),
-        and morning flag-pull (night flag + past morning_start -> kick). Never
-        raises; no-ops without kick_cmd. Reply path claims instantly. `text` =
+        """Her message landed on wx -> claim any armed watches on wx (one kick).
+        Never raises; no-ops without kick_cmd. Reply path claims instantly. `text` =
         her reply body (iLink already merges a caption into the same text item),
         attached to the reply kick; `media_type` (e.g. "image") tags it as
         "[<type>] <caption>" when present, or "[<type>]" alone for a caption-less
@@ -484,10 +483,6 @@ class MainLoop:
                 note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
                 cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
                                  text_chars=self._cfg.outbox_kick_text_chars)
-            if cortex_kick.night_mode(self._cfg.cortex_wake_state_file) and \
-                    cortex_kick.past_morning_start(
-                        self._cfg.night_morning_start, self._cfg.timezone):
-                cortex_kick.kick(kc, "morning")
         except Exception as e:
             logger.warning("inbound-from-her kick failed: %s", e)
 
