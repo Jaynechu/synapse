@@ -4,9 +4,9 @@
 
 ## Slash
 
-- /clear (alias /new) — fresh session, model reset to default
+- /clear (alias /new) — fresh session, keeps current model
 - /stop — interrupt, keep sid
-- /model <id|alias> — swap model, keep sid
+- /model <id|alias> — swap model, keep sid; becomes the new default (survives restart)
 - /info (alias /status, /usage) — model | effort | health / sid | uptime | ctx
 - /help — render this file
 - /thinking on|off — emit thinking block per turn
