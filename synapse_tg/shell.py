@@ -189,7 +189,9 @@ class ShellHost:
 
     def _arm(self, state: dict | None = None) -> None:
         st = self._read_state() if state is None else state
-        self._scheduler.schedule(self._shell, self._deadline(st), self._fire)
+        at = self._deadline(st)
+        self._scheduler.schedule(self._shell, at, self._fire)
+        logger.info("shell armed: next round at %s", _iso(at))
 
     def on_user_message(self) -> None:
         """Any inbound tg message restarts the silence cycle."""
@@ -271,6 +273,8 @@ class ShellHost:
         note = direction or await asyncio.to_thread(self._render_note)
         if not note:
             return  # log already emitted; the cycle re-arms regardless
+        logger.info("shell fire: feeding a %s round (%d chars)",
+                    "directed" if direction else "note", len(note))
         body = f"{self._cfg.shell_note_tag}\n{note}".strip()
         if await self._feed(body):
             self._write_state({"last_note_ts": _iso(self._clock())})

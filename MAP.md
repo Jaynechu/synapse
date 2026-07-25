@@ -64,7 +64,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - Shared `_deliver_reply` — turn-aware stream/drain delivers unsolicited turns inline; solicited turn returned to flush as normal.
 - Resident idle listener: [tg] asyncio task under the flush `asyncio.Lock`, started post_init. [wx] daemon thread. Delivers background-task answers between turns; typing indicator runs during generation. Lazy respawn on EOF only — listener never respawns.
 - Lock discipline: [tg] one asyncio.Lock serializes flush+listener. [wx] `_state_lock` is never held across recv; dedicated `_recv_lock` is the single-consumer guarantee on the provider stdout queue — flush holds it across send→drain→retry, listener across poll+drain. Strict ordering: `_recv_lock` outer, `_state_lock` inner. Any future stdout-queue consumer must take `_recv_lock`.
-- Unsolicited delivery target = last real chat id (`_pending_chat_id`); if None, WARNING + drain + drop.
+- Bridge-initiated delivery target (`_outbound_target`, used by shell `feed_turn` + idle listener) = live chat (`_pending_chat_id`), else config `[tg].chat_id`; bot seeded post_init via `attach_bot` so a restart delivers before any inbound message. Both None → WARNING + drain + drop.
 - Storm alert `bridge_turn_storm` when >`unsolicited_storm_cap` (config, default 5) unsolicited turns land in one lock-hold.
 
 ## 6. Commands

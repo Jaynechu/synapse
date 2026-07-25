@@ -166,6 +166,23 @@ class TgLoop:
     def attach_shell(self, shell) -> None:
         self._shell = shell
 
+    def attach_bot(self, bot) -> None:
+        """Seed the outbound bot at startup. Without it every bridge-initiated
+        round (shell note, unsolicited turn) is stuck until the user speaks
+        first, because self._bot is otherwise only learned from an inbound
+        message."""
+        if self._bot is None:
+            self._bot = bot
+
+    def _outbound_target(self) -> tuple["Bot | None", int | None]:
+        """Where a bridge-initiated round ships: the live chat once one is
+        known, else the configured [tg].chat_id — a freshly restarted bridge
+        has no inbound message yet."""
+        chat_id = self._pending_chat_id
+        if chat_id is None:
+            chat_id = self._cfg.chat_id
+        return self._bot, chat_id
+
     def _load_state(self) -> BridgeState:
         # default_model empty (no fixed default) → seed None, not "", so it
         # matches the "no model known yet" sentinel used everywhere else
@@ -518,8 +535,7 @@ class TgLoop:
         provider = self._provider
         if provider is None or not getattr(provider, "alive", False):
             return  # nothing to drain; lazy respawn happens on the next send
-        bot = self._bot
-        chat_id = self._pending_chat_id
+        bot, chat_id = self._outbound_target()
 
         async with self._lock:
             # Re-read after acquiring: a swap may have replaced it while waiting.
@@ -1140,8 +1156,7 @@ class TgLoop:
         and ship its reply to tg like any other turn — free-round replies are
         never held. Returns False when there is no chat target or the provider
         could not take the turn."""
-        bot = self._bot
-        chat_id = self._pending_chat_id
+        bot, chat_id = self._outbound_target()
         if bot is None or chat_id is None:
             logger.warning("feed_turn: no chat target — round skipped")
             return False

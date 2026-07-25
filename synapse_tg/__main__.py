@@ -249,6 +249,9 @@ def main() -> int:
     shell_box: dict = {"host": None, "task": None}
 
     async def _post_init(application) -> None:
+        # Bridge-initiated rounds (shell note, unsolicited turn) must ship
+        # straight after a restart, before any inbound message arrives.
+        loop.attach_bot(application.bot)
         listener_box["task"] = application.create_task(loop._idle_listener())
         if cfg.shell_enabled:
             from .shell import ShellHost

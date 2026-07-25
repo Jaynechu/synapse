@@ -754,3 +754,110 @@ def test_state_write_merges_and_preserves_foreign_keys(tmp_path):
 
 def test_state_read_missing_file(tmp_path):
     assert shell_state.read(tmp_path / "nope", "tg") == {}
+
+
+# ── production wiring: a restarted bridge has no inbound message yet ──────────
+#
+# The whole shell was dead in production because these paths were only ever
+# tested with feed_turn stubbed out. Wired the way __main__._post_init wires
+# them, a fired round must still reach tg through the configured [tg].chat_id.
+
+class _ScriptedProvider:
+    """Resident that answers one turn. Never spawns anything."""
+
+    turn_output_capped = False
+
+    def __init__(self, text="reply text", sid="sess-boot") -> None:
+        self.alive = True
+        self.session_id = sid
+        self.sent: list[str] = []
+        self._text = text
+
+    def is_alive(self):
+        return True
+
+    def spawn(self):
+        pass
+
+    def send(self, body):
+        self.sent.append(body)
+
+    def recv(self, first_line=None):
+        yield {"type": "system", "subtype": "init", "session_id": self.session_id}
+        yield {"type": "assistant", "message": {
+            "content": [{"type": "text", "text": self._text}],
+            "usage": {"input_tokens": 11, "output_tokens": 2}}}
+        yield {"type": "result", "result": self._text}
+
+    def poll_line(self, timeout):
+        return None
+
+    def cancel(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def _wired(tmp_path, clock, **kw):
+    """host + loop + bot wired exactly as __main__._post_init does: the real
+    feed_turn, the bot seeded from the application, no inbound message yet."""
+    cfg = _cfg(tmp_path, chat_id=4242, **kw)
+    loop = TgLoop(cfg)
+    bot = FakeBot()
+    loop.attach_bot(bot)                    # __main__.py:254
+    host = ShellHost(cfg, loop, clock=clock)
+    loop.attach_shell(host)                 # __main__.py:260
+    host._render_note = lambda: "NOTE BODY"
+    loop._provider = _ScriptedProvider()
+    return host, loop, bot
+
+
+def test_silence_round_reaches_tg_without_any_inbound_message(tmp_path):
+    clock = Clock()
+    host, loop, bot = _wired(tmp_path, clock)
+    assert loop._pending_chat_id is None     # fresh boot: nothing inbound yet
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+
+    assert loop._provider.sent and "NOTE BODY" in loop._provider.sent[0]
+    assert bot.sent, "the fed round's reply must ship to the configured chat"
+    assert {m["chat_id"] for m in bot.sent} == {4242}
+
+
+def test_a_wired_turn_writes_the_ledger(tmp_path):
+    clock = Clock()
+    host, loop, _bot = _wired(tmp_path, clock)
+    assert not shell_state.state_path(tmp_path / "shells", "tg").exists()
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert st["session_id"] == "sess-boot"
+    assert st["occupancy"] == 13             # 11 input + 2 output
+    assert st["last_note_ts"]
+    assert st["tokens_date"] == host._local_date()
+
+
+def test_live_chat_still_wins_over_the_configured_chat_id(tmp_path):
+    clock = Clock()
+    host, loop, bot = _wired(tmp_path, clock)
+    loop._pending_chat_id = 99               # an inbound message landed
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert {m["chat_id"] for m in bot.sent} == {99}
