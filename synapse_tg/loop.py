@@ -42,6 +42,7 @@ from synapse_core import cortex_kick
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
 from . import outbox
+from .shell import _tzinfo
 from .split import split_for_tg, split_for_tg_typed
 from .typing_action import TypingAction
 
@@ -146,6 +147,7 @@ class TgLoop:
         self._pending_chat_id: int | None = None
         self._bot: Bot | None = None
         self._state_path = cfg.data_dir / "bridge_state.json"
+        self._tz = _tzinfo(cfg.timezone)
         self._state = self._load_state()
         self._registry = self._build_registry()
         self._queued_extra_bubbles: list[str] = []
@@ -440,7 +442,8 @@ class TgLoop:
                 logger.warning("record_session failed for %s", sid)
 
     async def _collect_turn(
-        self, typing: TypingAction, first_line: str | None = None
+        self, typing: TypingAction, first_line: str | None = None,
+        bot: Bot | None = None, chat_id: int | None = None,
     ) -> tuple[str, str, bool] | None:
         """Drain ONE turn from the provider. Returns (text, thinking,
         unsolicited) or None when the recv thread ended before any turn
@@ -448,6 +451,8 @@ class TgLoop:
 
         `first_line` is a raw line the idle listener already pulled off the
         queue that opened this turn; recv processes it before the queue.
+        `bot`/`chat_id` (when known) let a lie_down(rotate=False) tool_use
+        send its 💤 notice immediately.
         """
         assert self._provider is not None
         q: queue.Queue = queue.Queue()
@@ -496,6 +501,11 @@ class TgLoop:
                     elif bt == "tool_use":
                         if not typing.running:
                             typing.start()
+                        name = block.get("name") or ""
+                        if name.endswith("lie_down"):
+                            tool_input = block.get("input") or {}
+                            if not tool_input.get("rotate"):
+                                await self._notify_lie_down(bot, chat_id, tool_input)
                     elif bt == "thinking":
                         if block.get("thinking"):
                             thinking_chunks.append(block["thinking"])
@@ -528,7 +538,7 @@ class TgLoop:
         assert self._provider is not None
         unsolicited_count = 0
         while True:
-            turn = await self._collect_turn(typing)
+            turn = await self._collect_turn(typing, bot=bot, chat_id=chat_id)
             if turn is None:
                 return "", ""
             text, thinking, unsolicited = turn
@@ -626,7 +636,7 @@ class TgLoop:
         line: str | None = first_line
         while line is not None:
             if not self._consume_non_turn_line(line):
-                turn = await self._collect_turn(typing, first_line=line)
+                turn = await self._collect_turn(typing, first_line=line, bot=bot, chat_id=chat_id)
                 if turn is not None:
                     text, thinking, _unsolicited = turn
                     count += 1
@@ -670,6 +680,31 @@ class TgLoop:
         for k, v in usage.items():
             if isinstance(v, int):
                 self._state.usage_total[k] = self._state.usage_total.get(k, 0) + v
+
+    def _local_hhmm_plus(self, minutes: float = 0.0) -> str:
+        """Now + `minutes`, rendered HH:mm in [core].timezone."""
+        now = datetime.now(self._tz)
+        return (now + timedelta(minutes=minutes)).strftime("%H:%M")
+
+    async def _notify_lie_down(
+        self, bot: Bot | None, chat_id: int | None, tool_input: dict
+    ) -> None:
+        """lie_down(rotate=False) tool_use: send the 💤 notice right away.
+        No-op without a known chat target; never raises into the turn."""
+        if bot is None or chat_id is None:
+            return
+        try:
+            mins = int(float(tool_input.get("next_wake_min")))
+        except (TypeError, ValueError):
+            logger.warning("lie_down notice: bad next_wake_min %r",
+                           tool_input.get("next_wake_min"))
+            return
+        text = messages.t("shell.lie_down", self._state.voice_style,
+                          min=mins, time=self._local_hhmm_plus(mins))
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            logger.warning("lie_down notice send failed: %s", e)
 
     def _maybe_storm_alert(self, count: int) -> None:
         """More than unsolicited_storm_cap unsolicited turns in one lock-hold
@@ -1204,9 +1239,19 @@ class TgLoop:
         """lie_down(rotate=True) from the shell: let any in-flight turn finish,
         then drop the session for a fresh one. The lock is what the fuse path
         gets for free by respawning after its turn — a rotate kick can land
-        mid-turn."""
+        mid-turn. This is the truthful rotation signal (a rotate tool_use
+        alone can be denied by a marrow hook) — send the 🌙 notice here."""
         async with self._lock:
             self.shell_respawn()
+        bot, chat_id = self._outbound_target()
+        if bot is None or chat_id is None:
+            return
+        text = messages.t("shell.rotated", self._state.voice_style,
+                          time=self._local_hhmm_plus())
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:
+            logger.warning("rotate notice send failed: %s", e)
 
     async def _deliver_reply(
         self, bot: Bot, chat_id: int, response: str, thinking: str
