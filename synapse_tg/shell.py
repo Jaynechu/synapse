@@ -228,30 +228,43 @@ class ShellHost:
     async def _fire(self, shell: str) -> None:
         """Scheduler callback. Also the kick landing point, so it re-reads the
         ledger first: a kick that only announced a FUTURE next_wake_at just
-        re-arms, no note."""
-        state = self._read_state()
-        now = self._clock()
-        if now < self._deadline(state):
-            self._arm(state)
-            return
-        if self._take_rotate():
-            # lie_down(rotate=True): the resident has written its handoff and
-            # asked to end the window. Same machinery as the fuse respawn minus
-            # the fuse prompt; next_wake_at is left standing, so the fresh
-            # session sleeps until the wake it just booked.
-            logger.info("shell rotate: lie_down(rotate=True) — fresh session")
-            await self._loop.shell_rotate()
+        re-arms, no note.
+
+        The scheduler consumes a shell's deadline before calling this, so a
+        callback that raises would otherwise leave the shell with none at all
+        — no idle fire, no wake fire — until an external kick arrives. Every
+        path below either returns through its own `self._arm()` or falls
+        through to the guaranteed one at the end; the `except` is only the
+        net for anything that raises before getting there.
+        """
+        try:
+            state = self._read_state()
+            now = self._clock()
+            if now < self._deadline(state):
+                self._arm(state)
+                return
+            if self._take_rotate():
+                # lie_down(rotate=True): the resident has written its handoff
+                # and asked to end the window. Same machinery as the fuse
+                # respawn minus the fuse prompt; next_wake_at is left
+                # standing, so the fresh session sleeps until the wake it
+                # just booked.
+                logger.info("shell rotate: lie_down(rotate=True) — fresh session")
+                await self._loop.shell_rotate()
+                self._arm()
+                return
+            wake = parse_wake_at(state.get("next_wake_at"))
+            due = wake is not None and now >= wake
+            # Ledger before delivery: the wake is one-shot and the fed round
+            # restarts the silence cycle, so a feed that dies mid-flight still
+            # costs its window instead of re-firing on the next pass.
+            self._set_idle_basis(self._clock(),
+                                 {"next_wake_at": None} if due else None)
+            await self._feed_note(self._take_pending())
             self._arm()
-            return
-        wake = parse_wake_at(state.get("next_wake_at"))
-        due = wake is not None and now >= wake
-        # Ledger before delivery: the wake is one-shot and the fed round
-        # restarts the silence cycle, so a feed that dies mid-flight still
-        # costs its window instead of re-firing on the next pass.
-        self._set_idle_basis(self._clock(),
-                             {"next_wake_at": None} if due else None)
-        await self._feed_note(self._take_pending())
-        self._arm()
+        except Exception:  # noqa: BLE001 — a dropped deadline is silent death
+            logger.exception("shell fire failed for %s — re-arming from ledger", shell)
+            self._arm()
 
     def _render_note(self) -> str | None:
         cmd = self._cfg.shell_note_render_cmd

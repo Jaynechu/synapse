@@ -443,6 +443,57 @@ def test_an_interrupted_feed_still_costs_its_whole_window(tmp_path):
     assert len(fed) == 2
 
 
+def test_fire_exception_still_rearms_the_shell(tmp_path, caplog):
+    """A callback exception must never leave the shell with no deadline: the
+    scheduler pops the entry before calling in, so a swallowed exception
+    without a re-arm would mean no idle fire and no wake fire until an
+    external kick landed."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock)
+
+    async def _boom(body):
+        raise RuntimeError("feed exploded")
+
+    loop.feed_turn = _boom
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")  # must not raise
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(run())
+
+    assert fed == []
+    assert "tg" in host._scheduler._table
+    at, _cb = host._scheduler._table["tg"]
+    assert at == pytest.approx(clock.t + 20 * MIN, abs=1)
+    assert "shell fire failed for tg" in caplog.text
+
+
+def test_fire_normal_path_arms_exactly_once(tmp_path):
+    """The exception net must not change the normal path: no double arm."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    calls: list[float] = []
+    real_arm = host._arm
+
+    def _counted_arm(state=None):
+        calls.append(clock.t)
+        return real_arm(state)
+
+    host._arm = _counted_arm
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 1
+    assert len(calls) == 2  # the boot arm + the one at the end of _fire
+
+
 # ── directed kick (T10) ───────────────────────────────────────────────────────
 
 def test_pending_note_is_fed_instead_of_the_rendered_note_and_cleared(tmp_path):
