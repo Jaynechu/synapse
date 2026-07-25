@@ -1148,7 +1148,9 @@ class MainLoop:
                     # source of truth — skip here.
                     pass
         elif isinstance(content, str):
-            sink.append(content)
+            cleaned = strip_tool_xml(content)
+            if cleaned:
+                sink.append(cleaned)
         usage = message.get("usage")
         if isinstance(usage, dict):
             self._merge_usage(usage)

@@ -73,3 +73,27 @@ def test_only_invoke_block_returns_empty() -> None:
 def test_collapses_triple_newlines() -> None:
     text = "para one\n\n\n\npara two"
     assert strip_tool_xml(text) == "para one\n\npara two"
+
+
+def test_orphan_opener_with_closed_param_returns_empty() -> None:
+    text = '<invoke name="x">\n<parameter name="n">1</parameter>'
+    assert strip_tool_xml(text) == ""
+
+
+def test_orphan_opener_alone_returns_empty() -> None:
+    text = '<invoke name="x">'
+    assert strip_tool_xml(text) == ""
+
+
+def test_orphan_opener_prose_after_closed_param_preserved() -> None:
+    text = (
+        '<invoke name="x">\n'
+        '<parameter name="n">1</parameter>\n'
+        "趴下了，一分钟后爬起来"
+    )
+    assert strip_tool_xml(text) == "趴下了，一分钟后爬起来"
+
+
+def test_orphan_opener_prose_immediately_after_preserved() -> None:
+    text = '<invoke name="x">\n好，1分钟，你数着。'
+    assert strip_tool_xml(text) == "好，1分钟，你数着。"
