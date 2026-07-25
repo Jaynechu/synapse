@@ -99,9 +99,8 @@ class TgConfig:
     shell_fuse_tokens: int = 180000
     shell_fuse_tag: str = "⚙️ [FUSE]"
     shell_fuse_prompt_text: str = (
-        "Summarise this whole session into one section and append it to handoff.md — "
-        "follow the format and style of the preceding sections. Call "
-        "lie_down(rotate=True) when done."
+        "Session context fused. Update handoff before rotate. Add todo if any. "
+        "lie_down(rotate=True)"
     )
 
     # CWD presets
