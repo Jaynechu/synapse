@@ -434,7 +434,7 @@ class Registry:
         self._ctx.swap_provider(canonical, state.session_id)
         state.model = canonical
         self._ctx.persist_state()
-        return self._t("model.ok", name=name)
+        return self._t("model.ok", name=self._resolved_name(canonical))
 
     def _handle_clear(self) -> str:
         state = self._ctx.state
@@ -460,7 +460,19 @@ class Registry:
         self._ctx.swap_provider(default_model, None)
         self._ctx.persist_state()
         effort = (state.effort_level or "high").capitalize()
-        return self._t("clear.ok", name=display_name(default_model), effort=effort)
+        return self._t(
+            "clear.ok", name=self._resolved_name(default_model), effort=effort
+        )
+
+    def _resolved_name(self, token: str | None) -> str:
+        """Display name for a model token, via the resolved-model cache.
+
+        Hit (state.model_resolved, learned from an earlier system/init): the
+        concrete id cc reports for this token. Miss: the token itself, which
+        may be a floating alias like "opus". Display-only, never a state write.
+        """
+        cached = (self._ctx.state.model_resolved or {}).get(token or "")
+        return display_name(cached or token)
 
     def _handle_resume(self, rest: str) -> str:
         """B1: /resume <sid> reads model from marrow.sessions (fallback jsonl

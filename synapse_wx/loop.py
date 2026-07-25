@@ -33,7 +33,7 @@ from .split import (
     merge_bubbles_to_cap,
     split_for_wechat_typed,
 )
-from synapse_core.state import BridgeState
+from synapse_core.state import BridgeState, remember_resolved_model
 from .typing_ping import TypingPing
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,9 @@ class MainLoop:
         last_active_path: Path,
         channel_label: str,
         media_dir: Path = DEFAULT_MEDIA_DIR,
+        persist_state: Callable[[], None] | None = None,
     ) -> None:
+        self._persist = persist_state
         self._ilink = ilink
         self._provider_factory = provider_factory
         self.state = state
@@ -1005,12 +1007,28 @@ class MainLoop:
             model = None
         if model and self._provider is not None:
             self._provider.model_actual = model
+            self._remember_resolved(model)
         # B1: persist (sid, model) so /resume <sid> can recover later.
         if isinstance(sid, str) and sid:
             try:
                 self._record_session(sid, model or self.state.model)
             except Exception as e:
                 logger.warning("record_session failed: %s", e)
+
+    def _remember_resolved(self, model_actual: str) -> None:
+        """Cache `--model <token>` -> cc's real id for later /clear + /model acks."""
+        prov = self._provider
+        token = getattr(prov, "model", None) or self.state.model
+        if remember_resolved_model(self.state, token, model_actual):
+            self._persist_state()
+
+    def _persist_state(self) -> None:
+        if self._persist is None:
+            return
+        try:
+            self._persist()
+        except Exception as e:
+            logger.warning("persist_state failed: %s", e)
 
     def _collect_turn(
         self, first_line: str | None = None

@@ -15,6 +15,11 @@ class BridgeState:
     """
 
     model: str | None = None
+    # Cache of the token handed to `cc --model` (often a floating alias like
+    # "opus") -> the concrete model id cc reported in its system/init event.
+    # Lets /clear + /model acks name the real model without asking cc again.
+    # Persisted; self-correcting (a new init for the same token overwrites).
+    model_resolved: dict[str, str] = field(default_factory=dict)
     session_id: str | None = None
     usage_total: dict[str, int] = field(default_factory=dict)
     # Snapshot of the most recent assistant turn's usage breakdown (overwrite,
@@ -54,3 +59,15 @@ class BridgeState:
     # /cwd — current cwd cc subprocess spawns in. None = use DEFAULT_CC_CWD.
     # Persisted; survives bridge restart so the active project sticks.
     cc_cwd: str | None = None
+
+
+def remember_resolved_model(
+    state: BridgeState, token: str | None, actual: str | None
+) -> bool:
+    """Record `cc --model <token>` -> the real id cc resolved. True if changed."""
+    if not token or not actual:
+        return False
+    if state.model_resolved.get(token) == actual:
+        return False
+    state.model_resolved[token] = actual
+    return True

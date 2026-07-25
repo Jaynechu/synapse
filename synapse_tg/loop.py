@@ -28,7 +28,7 @@ from synapse_core.commands.registry import CommandContext, Registry
 from synapse_core.debounce import InboundBuffer
 from synapse_core.providers.cc import ClaudeCodeProvider, MEDIA_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT, POLL_EOF, QUOTE_SYSTEM_PROMPT
 from synapse_core.providers.errors import ProviderDeadError
-from synapse_core.state import BridgeState
+from synapse_core.state import BridgeState, remember_resolved_model
 
 from .media.inbound import (
     build_read_instruction,
@@ -420,6 +420,9 @@ class TgLoop:
         model = ev.get("model")
         if isinstance(model, str) and model and self._provider is not None:
             self._provider.model_actual = model
+            token = self._provider.model or self._state.model
+            if remember_resolved_model(self._state, token, model):
+                self._persist_state()
         sid = ev.get("session_id")
         if not (sid and isinstance(sid, str)):
             return

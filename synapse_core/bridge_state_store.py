@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 PERSISTED_KEYS: tuple[str, ...] = (
     "model",
+    "model_resolved",
     "effort_level",
     "thinking_on",
     "quote_on",
@@ -72,7 +73,17 @@ def load(path: Path) -> dict:
     if not isinstance(data, dict):
         return {}
     # Only keep persisted keys — drop anything else silently.
-    return {k: data[k] for k in PERSISTED_KEYS if k in data}
+    out = {k: data[k] for k in PERSISTED_KEYS if k in data}
+    # model_resolved is the only structured value: drop a malformed map rather
+    # than overlaying a non-dict onto BridgeState.
+    raw_map = out.get("model_resolved")
+    if raw_map is not None:
+        out["model_resolved"] = (
+            {k: v for k, v in raw_map.items() if isinstance(k, str) and isinstance(v, str)}
+            if isinstance(raw_map, dict)
+            else {}
+        )
+    return out
 
 
 def save(path: Path, data: dict) -> None:

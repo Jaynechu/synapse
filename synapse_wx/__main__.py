@@ -225,6 +225,7 @@ def main() -> int:
         ilink=ilink,
         provider_factory=provider_factory,
         state=state,
+        persist_state=_save_state,
         sessions=sessions,
         idle_loop=idle_loop,
         buffer=buffer,
