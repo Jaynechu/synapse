@@ -34,6 +34,7 @@ from .split import (
     split_for_wechat_typed,
 )
 from synapse_core.state import BridgeState, remember_resolved_model
+from synapse_core.text_clean import strip_tool_xml
 from .typing_ping import TypingPing
 
 logger = logging.getLogger(__name__)
@@ -1136,7 +1137,9 @@ class MainLoop:
                 if seg_type == "text":
                     txt = seg.get("text")
                     if isinstance(txt, str):
-                        sink.append(txt)
+                        cleaned = strip_tool_xml(txt)
+                        if cleaned:
+                            sink.append(cleaned)
                 elif seg_type == "thinking":
                     # Under --include-partial-messages, cc fills BOTH the
                     # stream_event thinking_delta path AND this final-frame

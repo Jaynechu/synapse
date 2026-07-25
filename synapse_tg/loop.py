@@ -29,6 +29,7 @@ from synapse_core.debounce import InboundBuffer
 from synapse_core.providers.cc import ClaudeCodeProvider, MEDIA_SYSTEM_PROMPT, NIGHT_SYSTEM_PROMPT, POLL_EOF, QUOTE_SYSTEM_PROMPT
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.state import BridgeState, remember_resolved_model
+from synapse_core.text_clean import strip_tool_xml
 
 from .media.inbound import (
     build_read_instruction,
@@ -402,7 +403,9 @@ class TgLoop:
                 for block in msg.get("content", []):
                     bt = block.get("type")
                     if bt == "text":
-                        chunks.append(block["text"])
+                        cleaned = strip_tool_xml(block["text"])
+                        if cleaned:
+                            chunks.append(cleaned)
                     elif bt == "thinking":
                         if block.get("thinking"):
                             thinking.append(block["thinking"])
@@ -498,7 +501,7 @@ class TgLoop:
                 for block in msg.get("content", []):
                     bt = block.get("type")
                     if bt == "text":
-                        chunk = block.get("text", "")
+                        chunk = strip_tool_xml(block.get("text", ""))
                         if chunk:
                             text_chunks.append(chunk)
                     elif bt == "tool_use":
