@@ -793,6 +793,35 @@ def test_rotate_waits_for_an_in_flight_turn(tmp_path):
     assert loop._state.session_id is None
 
 
+def test_shell_rotate_sends_rotated_notice(tmp_path, monkeypatch):
+    """The truthful rotation signal: shell_rotate() sends 🌙 after respawning,
+    to the outbound target (bot attached, no inbound message yet)."""
+    import synapse_tg.loop as mod
+
+    class _Fixed(mod.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 26, 22, 15, tzinfo=tz)
+
+    monkeypatch.setattr(mod, "datetime", _Fixed)
+
+    cfg = _cfg(tmp_path, chat_id=4242)
+    loop = TgLoop(cfg)
+    bot = FakeBot()
+    loop.attach_bot(bot)
+
+    asyncio.run(loop.shell_rotate())
+
+    assert [m["text"] for m in bot.sent] == ["\U0001f319 Rotated 22:15"]
+    assert {m["chat_id"] for m in bot.sent} == {4242}
+
+
+def test_shell_rotate_sends_no_notice_without_a_chat_target(tmp_path):
+    cfg = _cfg(tmp_path)
+    loop = TgLoop(cfg)
+    asyncio.run(loop.shell_rotate())  # no bot attached, no chat_id — no crash
+
+
 # ── feed_turn: the fed round's reply ships to tg like any other turn ──────────
 
 class _FeedProvider:

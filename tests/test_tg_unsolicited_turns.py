@@ -74,6 +74,20 @@ def _turn(text, *, unsolicited=False, sid="sid-x"):
     return evs
 
 
+def _turn_with_tool_use(tool_input, *, sid="sid-x", name="mcp__marrow__lie_down"):
+    evs = [
+        {"type": "system", "subtype": "init", "session_id": sid},
+        {"type": "assistant", "message": {
+            "content": [
+                {"type": "tool_use", "name": name, "input": tool_input},
+                {"type": "text", "text": "ok"},
+            ],
+            "usage": {"output_tokens": 1}}},
+        {"type": "result", "result": "ok"},
+    ]
+    return evs
+
+
 class _NoTyping:
     running = True
 
@@ -191,3 +205,62 @@ def test_storm_cap_config_override(tmp_path):
     p.write_text("[provider]\nunsolicited_storm_cap = 3\n")
     cfg = load_config(p)
     assert cfg.unsolicited_storm_cap == 3
+
+
+# ── 💤 lie_down(rotate=False) tool_use notice ─────────────────────────────────
+
+class _FixedClock:
+    """datetime subclass pinned to a fixed instant, tz kept as passed."""
+    def __init__(self, y, mo, d, h, mi):
+        self._parts = (y, mo, d, h, mi)
+
+    def install(self, monkeypatch, module):
+        y, mo, d, h, mi = self._parts
+
+        class _Fixed(module.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(y, mo, d, h, mi, tzinfo=tz)
+
+        monkeypatch.setattr(module, "datetime", _Fixed)
+
+
+def test_lie_down_tool_use_sends_immediate_notice(tmp_path, monkeypatch):
+    import synapse_tg.loop as mod
+    _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    provider = ScriptedProvider([_turn_with_tool_use({"next_wake_min": 30})])
+    text, _ = _stream(loop, bot, provider, monkeypatch)
+    assert text == "ok"
+    lie_msgs = [m["text"] for m in bot.sent if m["text"].startswith("\U0001f4a4")]
+    assert lie_msgs == ["\U0001f4a4 30min 10:30"]
+
+
+def test_lie_down_rotate_true_sends_no_notice(tmp_path, monkeypatch):
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    provider = ScriptedProvider([
+        _turn_with_tool_use({"next_wake_min": 30, "rotate": True}),
+    ])
+    _stream(loop, bot, provider, monkeypatch)
+    assert bot.sent == []
+
+
+def test_lie_down_bad_next_wake_min_skips_without_crashing(tmp_path, monkeypatch):
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    provider = ScriptedProvider([_turn_with_tool_use({})])
+    text, _ = _stream(loop, bot, provider, monkeypatch)
+    assert text == "ok"
+    assert bot.sent == []
+
+
+def test_other_tool_use_sends_no_lie_down_notice(tmp_path, monkeypatch):
+    loop = _loop(tmp_path)
+    bot = FakeBot()
+    provider = ScriptedProvider([
+        _turn_with_tool_use({"path": "x"}, name="Read"),
+    ])
+    _stream(loop, bot, provider, monkeypatch)
+    assert bot.sent == []
