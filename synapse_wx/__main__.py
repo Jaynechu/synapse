@@ -110,6 +110,10 @@ def main() -> int:
     cfg = load_config()
     if cfg.ack_overrides:
         cmd_messages.load_overrides(cfg.ack_overrides)
+    # /cwd presets: config wins over the SYNAPSE_CWD_PRESETS env fallback.
+    if cfg.cwd_presets:
+        import synapse_core.commands.registry as _reg
+        _reg._CWD_PRESETS = tuple(v for _, v in sorted(cfg.cwd_presets.items()) if v)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     pid_path = CONFIG_DIR / "synapse-wx.pid"

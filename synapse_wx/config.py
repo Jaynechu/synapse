@@ -95,6 +95,8 @@ class Config:
     night_morning_start: str = "06:00"
     timezone: str = "Australia/Melbourne"
 
+    # /cwd presets from [cwd_presets] — digit -> absolute path
+    cwd_presets: dict | None = None
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
     ack_overrides: dict | None = None
 
@@ -218,6 +220,9 @@ def load_config(path: Path | None = None) -> Config:
                 val = session[field_name]
                 if isinstance(val, str):
                     setattr(cfg, field_name, val)
+    presets = data.get("cwd_presets") or {}
+    if isinstance(presets, dict):
+        cfg.cwd_presets = {str(k): str(v) for k, v in presets.items() if isinstance(v, str)}
     ack = data.get("ack_overrides") or {}
     if isinstance(ack, dict):
         cfg.ack_overrides = {

@@ -49,9 +49,10 @@ _EFFORT_LEVELS: frozenset[str] = frozenset(
 )
 
 # /cwd presets. Index = digit shown to user; preset 1 is the boot fallback
-# when persisted state.cc_cwd no longer exists on disk. Loaded from
-# SYNAPSE_CWD_PRESETS env var (colon-separated paths); falls back to empty
-# tuple when unset so the caller sees "no presets" rather than hardcoded paths.
+# when persisted state.cc_cwd no longer exists on disk. Both bridges override
+# this at boot from their config's [cwd_presets]; the SYNAPSE_CWD_PRESETS env
+# var (colon-separated paths) is the fallback when that table is absent, and an
+# empty tuple means "no presets" rather than hardcoded paths.
 _CWD_PRESETS: tuple[str, ...] = tuple(
     p for p in os.environ.get("SYNAPSE_CWD_PRESETS", "").split(":") if p.strip()
 )
