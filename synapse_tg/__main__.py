@@ -177,7 +177,9 @@ def main() -> int:
             cc_projects_dir=cc_projects_dir,
             sid=sid,
         ),
-        clear_default_model=cfg.default_model,
+        # Empty on purpose: default_model only SEEDS a never-switched bridge.
+        # /clear must follow the saved state.model so a /model switch sticks.
+        clear_default_model="",
         list_recent_sessions=lambda: marrow_session.list_recent_sessions(
             session_list_recent_command=cfg.session_list_recent_command,
             cc_projects_dir=cc_projects_dir,

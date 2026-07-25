@@ -177,7 +177,7 @@ def test_init_handshake_does_not_start_typing_or_drain(tmp_path):
     assert loop._listen_typing is None
     # State still mirrored from the handshake; provider stays healthy.
     assert loop.state.session_id == "sid-new"
-    assert loop.state.model == "opus"
+    assert prov.model_actual == "opus"
     assert prov.alive is True
     # Next iteration keeps working (loop stayed healthy).
     loop._listen_once()

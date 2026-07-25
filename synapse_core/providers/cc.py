@@ -175,6 +175,9 @@ class ClaudeCodeProvider(Provider):
         self.process: subprocess.Popen[str] | None = None
         self.alive: bool = False
         self.session_id: str | None = None
+        # Model cc actually resolved this spawn (self.model may be a floating
+        # alias like "opus"). Display-only — never written back into state.
+        self.model_actual: str | None = None
         self.usage_total: dict[str, int] = {}
         # Per-turn output cap state (reset at the start of every recv()).
         # turn_output_capped: sticky flag the loop layer reads after the turn
@@ -381,7 +384,14 @@ class ClaudeCodeProvider(Provider):
                 sid = ev.get("session_id")
                 if isinstance(sid, str) and sid:
                     self.session_id = sid
+                m = ev.get("model")
+                if isinstance(m, str) and m:
+                    self.model_actual = m
             elif t == "assistant":
+                if not self.model_actual:
+                    m = (ev.get("message") or {}).get("model")
+                    if isinstance(m, str) and m:
+                        self.model_actual = m
                 usage = (ev.get("message") or {}).get("usage") or {}
                 for k in _USAGE_KEYS:
                     v = usage.get(k)

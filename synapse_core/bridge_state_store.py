@@ -1,10 +1,10 @@
 """Persist a tiny slice of BridgeState across bridge crashes.
 
-Only `effort_level`, `thinking_on`, `quote_on` are persisted — everything else
-is session-scoped and a crash should reset it. `model` is intentionally NOT
-persisted: bridge starts on the caller's configured default model, ``/resume
-<sid>`` pulls the historic model from marrow.sessions, and ``/swap`` sets it
-for the current session only. The caller owns the storage path.
+User preferences that must outlive a restart are persisted; everything else is
+session-scoped and a crash should reset it. `model` is among them: a ``/model``
+switch sets the NEW DEFAULT, so it survives restart and ``/clear`` instead of
+snapping back to the configured default (which only seeds a bridge that has
+never been switched). The caller owns the storage path.
 
 The file write uses :func:`marrow._atomic.atomic_write` when marrow is
 importable; otherwise it falls back to a tempfile + ``os.replace`` pattern so
@@ -22,6 +22,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 PERSISTED_KEYS: tuple[str, ...] = (
+    "model",
     "effort_level",
     "thinking_on",
     "quote_on",

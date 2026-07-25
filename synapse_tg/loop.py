@@ -184,14 +184,17 @@ class TgLoop:
         return self._bot, chat_id
 
     def _load_state(self) -> BridgeState:
-        # default_model empty (no fixed default) → seed None, not "", so it
-        # matches the "no model known yet" sentinel used everywhere else
-        # (provider skips --model, display_name shows "?").
-        state = BridgeState(model=self._cfg.default_model or None)
+        state = BridgeState()
         saved = bridge_state_store.load(self._state_path)
         for k, v in saved.items():
             if hasattr(state, k):
                 setattr(state, k, v)
+        # A saved /model switch is the new default and wins. default_model only
+        # seeds a bridge that never switched; empty → None, not "", so it
+        # matches the "no model known yet" sentinel used everywhere else
+        # (provider skips --model, display_name shows "?").
+        if not state.model:
+            state.model = self._cfg.default_model or None
         return state
 
     def _persist_state(self) -> None:
@@ -291,7 +294,10 @@ class TgLoop:
             close_provider=self._close_provider,
             forget_session=self._forget_session,
             persist_state=self._persist_state,
-            clear_default_model=self._cfg.default_model,
+            # Empty on purpose: default_model only SEEDS a never-switched
+            # bridge (_load_state). /clear must follow the saved state.model
+            # so a /model switch survives it.
+            clear_default_model="",
             commands_doc_path=Path(__file__).resolve().parents[1] / "COMMANDS.md",
             fetch_diary=self._make_fetch_diary(),
             record_effort=self._record_effort,
@@ -406,6 +412,12 @@ class TgLoop:
     def _handle_init_event(self, ev: dict) -> None:
         """Shared system(init) handling: adopt session_id, stamp created_at,
         record the session. Used by every turn (solicited + unsolicited)."""
+        # cc reports the model it actually resolved (state.model may be a
+        # floating alias like "opus"). Display-only — mirrored onto the
+        # provider because the idle listener parses init events outside recv().
+        model = ev.get("model")
+        if isinstance(model, str) and model and self._provider is not None:
+            self._provider.model_actual = model
         sid = ev.get("session_id")
         if not (sid and isinstance(sid, str)):
             return
@@ -766,6 +778,7 @@ class TgLoop:
                 pass
         return {
             "model": self._state.model,
+            "model_actual": getattr(self._provider, "model_actual", None),
             "session_id": self._state.session_id,
             "effort": self._state.effort_level,
             "thinking": self._state.thinking_on,

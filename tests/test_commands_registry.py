@@ -175,8 +175,8 @@ def test_model_raw_canonical_id_passes_through() -> None:
     reg, hooks, _ = _make(s)
     verdict, reply = reg.dispatch("/model claude-future-9")
     assert verdict == "handled"
-    # display fallback uses the id itself.
-    assert reply == "🤖(claude-future-9)上线中..."
+    # Rule-based display formats an unseen id with no table edit.
+    assert reply == "🤖(Future 9)上线中..."
     assert hooks.swap_calls == [("claude-future-9", None)]
 
 

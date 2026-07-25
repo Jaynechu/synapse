@@ -380,7 +380,9 @@ class Registry:
         state = self._ctx.state
         snap = self._safe_status()
 
-        model_disp = display_name(state.model)
+        # Prefer the model cc actually resolved — state.model may hold a
+        # floating alias ("opus") or be unset on a fresh boot.
+        model_disp = display_name(snap.get("model_actual") or state.model)
         effort = state.effort_level or "high"
         cwd = snap.get("cwd") or "?"
         health = _health_word(snap)

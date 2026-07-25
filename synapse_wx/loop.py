@@ -983,8 +983,8 @@ class MainLoop:
 
     def _apply_init_event(self, ev: dict) -> None:
         """Shared system(init) handling: adopt session_id, stamp created_at,
-        mirror model, record the session. Used by every turn drain and by the
-        idle listener when it consumes a bare spawn handshake."""
+        note cc's resolved model, record the session. Used by every turn drain
+        and by the idle listener when it consumes a bare spawn handshake."""
         sid = ev.get("session_id")
         if isinstance(sid, str) and sid:
             # Stamp session_start_ts on sid change so /info reports
@@ -1002,15 +1002,18 @@ class MainLoop:
                     self._sessions.set(self._last_from_wxid, sid)
                 except Exception as e:
                     logger.warning("sessions.set failed: %s", e)
-        # Mirror cc-reported model (incl. "[1m]" suffix). Without this,
-        # /info shows "?" when bridge spawned without an explicit --model.
+        # cc reports the model it actually resolved (state.model may be a
+        # floating alias like "opus"). Display-only — mirrored onto the
+        # provider because the idle listener parses init events outside recv().
         model = ev.get("model")
-        if isinstance(model, str) and model:
-            self.state.model = model
+        if not (isinstance(model, str) and model):
+            model = None
+        if model and self._provider is not None:
+            self._provider.model_actual = model
         # B1: persist (sid, model) so /resume <sid> can recover later.
         if isinstance(sid, str) and sid:
             try:
-                self._record_session(sid, self.state.model)
+                self._record_session(sid, model or self.state.model)
             except Exception as e:
                 logger.warning("record_session failed: %s", e)
 
@@ -1425,6 +1428,7 @@ class MainLoop:
         return {
             "cc_pid": pid,
             "cwd": cwd,
+            "model_actual": getattr(prov, "model_actual", None),
             "ilink_ok": ilink_ok,
             "last_active_sid": self.state.session_id,
             "session_age_sec": session_age,

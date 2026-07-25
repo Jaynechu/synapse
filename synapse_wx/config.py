@@ -33,6 +33,9 @@ class Config:
     target_wxid: str = ""
     marrow_repo_cmd: str = ""
     cc_cwd: str = ""  # cwd cc subprocess spawns in; empty = $HOME
+    # Seeds BridgeState.model on a bridge that has never been switched. A
+    # persisted /model choice wins over it; empty = let cc pick its own.
+    default_model: str = ""
     # Provider liveness: seconds of continuous stream silence before the soft
     # liveness check (poll process) and the hard idle kill (stall -> respawn).
     idle_soft_s: float = 60.0
@@ -195,6 +198,9 @@ def load_config(path: Path | None = None) -> Config:
         storm = provider.get("unsolicited_storm_cap")
         if isinstance(storm, int) and not isinstance(storm, bool) and storm >= 0:
             cfg.unsolicited_storm_cap = storm
+        model = provider.get("default_model")
+        if isinstance(model, str) and model:
+            cfg.default_model = model
     session = data.get("session") or {}
     if isinstance(session, dict):
         for field_name in (

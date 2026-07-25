@@ -86,6 +86,28 @@ def test_status_no_poll_with_cc_alive() -> None:
     )
 
 
+def test_status_prefers_real_running_model() -> None:
+    """state.model holds the floating alias; /info shows what cc resolved."""
+    ctx = _make_ctx({"cwd": "/x", "ilink_ok": True, "cc_pid": 1,
+                     "model_actual": "claude-opus-5"})
+    ctx.state.model = "opus"
+    assert Registry(ctx).dispatch("/status")[1].startswith("Opus 5[high] | /x")
+
+
+def test_status_real_model_shown_when_state_model_unset() -> None:
+    """Fresh boot with no configured model — no more bare '?'."""
+    ctx = _make_ctx({"cwd": "/x", "ilink_ok": True, "cc_pid": 1,
+                     "model_actual": "claude-opus-5"})
+    ctx.state.model = None
+    assert Registry(ctx).dispatch("/status")[1].startswith("Opus 5[high]")
+
+
+def test_status_falls_back_to_state_model_before_first_init() -> None:
+    ctx = _make_ctx({"cwd": "/x", "ilink_ok": True, "cc_pid": 1})
+    ctx.state.model = "opus"
+    assert Registry(ctx).dispatch("/status")[1].startswith("Opus[high]")
+
+
 def test_help_renders_doc_body(tmp_path: Path) -> None:
     doc = tmp_path / "COMMANDS.md"
     doc.write_text("# Demo\n- /status\n- /help\n")

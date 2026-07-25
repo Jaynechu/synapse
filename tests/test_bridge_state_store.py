@@ -1,7 +1,7 @@
 """Tests for the persisted bridge_state file.
 
-`effort_level` / `thinking_on` / `quote_on` survive bridge crashes;
-everything else (incl. `model`) stays session-scoped.
+User preferences (`model`, `effort_level`, `thinking_on`, `quote_on`, ...)
+survive bridge crashes; everything else stays session-scoped.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def test_bridge_state_persist_roundtrip(tmp_path: Path) -> None:
             "effort_level": "high",
             "thinking_on": True,
             "quote_on": True,
-            # model is intentionally session-scoped — should be dropped.
+            # A /model switch is the new default — it must survive a restart.
             "model": "claude-opus-4-6[1m]",
             "session_id": "ignored",
         },
@@ -35,6 +35,7 @@ def test_bridge_state_persist_roundtrip(tmp_path: Path) -> None:
         "effort_level": "high",
         "thinking_on": True,
         "quote_on": True,
+        "model": "claude-opus-4-6[1m]",
         "session_id": "ignored",
     }
 
@@ -67,11 +68,11 @@ def test_bridge_state_cc_cwd_roundtrip(tmp_path: Path) -> None:
 def test_bridge_state_save_drops_unknown_keys(tmp_path: Path) -> None:
     p = tmp_path / "bridge_state.json"
     bridge_state_store.save(
-        p, {"thinking_on": True, "wild_card": 99, "model": "drop_me"}
+        p, {"thinking_on": True, "wild_card": 99, "model": "opus"}
     )
     loaded = bridge_state_store.load(p)
     assert "wild_card" not in loaded
-    assert "model" not in loaded  # session-scoped
+    assert loaded["model"] == "opus"
     assert loaded["thinking_on"] is True
 
 

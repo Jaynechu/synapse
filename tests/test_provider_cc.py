@@ -165,6 +165,51 @@ def test_recv_parses_session_id_and_usage_and_breaks_on_result():
         }
 
 
+def test_recv_captures_model_from_init():
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s",
+                    "model": "claude-opus-5"}) + "\n",
+        json.dumps({"type": "result", "result": "ok"}) + "\n",
+    ]
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen(lines)
+        # The user asked for the floating alias; cc resolves it.
+        p = _provider(model="opus")
+        p.spawn()
+        list(p.recv())
+        assert p.model_actual == "claude-opus-5"
+        assert p.model == "opus"
+
+
+def test_recv_falls_back_to_assistant_message_model():
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s"}) + "\n",
+        json.dumps({"type": "assistant",
+                    "message": {"model": "claude-opus-5", "content": [],
+                                "usage": {}}}) + "\n",
+        json.dumps({"type": "result", "result": "ok"}) + "\n",
+    ]
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen(lines)
+        p = _provider()
+        p.spawn()
+        list(p.recv())
+        assert p.model_actual == "claude-opus-5"
+
+
+def test_recv_model_actual_none_when_stream_never_reports_one():
+    lines = [
+        json.dumps({"type": "system", "subtype": "init", "session_id": "s"}) + "\n",
+        json.dumps({"type": "result", "result": "ok"}) + "\n",
+    ]
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen(lines)
+        p = _provider()
+        p.spawn()
+        list(p.recv())
+        assert p.model_actual is None
+
+
 def test_recv_skips_bad_json_lines():
     lines = [
         "not json at all\n",

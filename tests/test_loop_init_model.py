@@ -1,4 +1,8 @@
-"""Loop mirrors cc-reported model from system/init into BridgeState."""
+"""Loop notes cc's resolved model from system/init onto the provider.
+
+`state.model` holds what the USER asked for (possibly a floating alias like
+"opus"); the resolved id is display-only and must never overwrite it.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ class _ModelEmittingProvider(Provider):
         self._queue: deque[dict[str, Any]] = deque()
         self.usage_total: dict[str, int] = {}
         self.session_id: str | None = None
+        self.model_actual: str | None = None
 
     def spawn(self, env: dict[str, str] | None = None) -> None:
         self.alive = True
@@ -102,16 +107,18 @@ def loop_env(tmp_path: Path):
     return loop, state
 
 
-def test_init_event_sets_state_model(loop_env) -> None:
+def test_init_event_notes_model_on_provider(loop_env) -> None:
     loop, state = loop_env
-    assert state.model is None
+    state.model = "opus"
     loop._provider.send("ping")
     loop._drain_recv()
-    assert state.model == "claude-opus-4-7[1m]"
+    assert loop._provider.model_actual == "claude-opus-4-7[1m]"
+    # The user's floating alias survives — never re-pinned to the resolved id.
+    assert state.model == "opus"
     assert state.session_id == "stub-sid-0001"
 
 
-def test_init_event_without_model_leaves_state_model_none(tmp_path: Path) -> None:
+def test_init_event_without_model_leaves_model_actual_none(tmp_path: Path) -> None:
     state = BridgeState()
     sessions = SessionTracker(state_path=tmp_path / "sessions.json")
     clock = lambda: 1000.0  # noqa: E731
@@ -136,5 +143,6 @@ def test_init_event_without_model_leaves_state_model_none(tmp_path: Path) -> Non
     loop._provider.spawn()
     loop._provider.send("ping")
     loop._drain_recv()
+    assert loop._provider.model_actual is None
     assert state.model is None
     assert state.session_id == "stub-sid-0001"

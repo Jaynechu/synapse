@@ -19,9 +19,8 @@ class TgConfig:
     data_dir: Path = field(default_factory=lambda: Path.home() / ".config" / "synapse-tg")
     marrow_bridge: bool = False
     cwd: Path | None = None
-    # Empty = no fixed default; both the first-boot BridgeState.model seed
-    # and CommandContext.clear_default_model (/clear) fall back to whatever
-    # the session was already on instead of resetting to a pinned model.
+    # Seeds BridgeState.model on a bridge that has never been switched. A
+    # persisted /model choice wins over it; empty = let cc pick its own.
     default_model: str = ""
 
     # Provider liveness: seconds of continuous stream silence before the soft

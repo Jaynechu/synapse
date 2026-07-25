@@ -165,13 +165,11 @@ def main() -> int:
     for k, v in persisted.items():
         if hasattr(state, k):
             setattr(state, k, v)
-    # Fallback: a fresh persist file (or one written before any /swap) has
-    # model=null; without this, provider_factory passes no --model and cc
-    # uses its own default (currently opus-4-7), bypassing the WeChat default.
-    # cfg.clear_default_model empty (no fixed default) must NOT blank out a
+    # A persisted /model choice wins. Only a bridge that never switched falls
+    # back to the configured default; empty config default must NOT blank a
     # freshly-None state.model into "" — leave it None so cc picks its own.
-    if state.model is None and cfg.clear_default_model:
-        state.model = cfg.clear_default_model
+    if not state.model:
+        state.model = cfg.default_model or cfg.clear_default_model or None
 
     def _save_state() -> None:
         bridge_state_store.save(BRIDGE_STATE_PATH, asdict(state))
