@@ -306,6 +306,143 @@ def test_kick_over_the_socket_reaches_the_scheduler(tmp_path, short_sock):
     assert not short_sock.exists()               # socket cleaned up on stop
 
 
+# ── wake vs idle: mutual exclusion, persisted basis ───────────────────────────
+
+def _iso_utc(ts: float) -> str:
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+def _basis(tmp_path) -> float | None:
+    return parse_wake_at(shell_state.read(tmp_path / "shells", "tg").get("last_user_ts"))
+
+
+def test_a_booked_wake_suspends_the_idle_cycle(tmp_path):
+    """Asleep until +3h: 25 silent minutes must NOT feed an idle round — the
+    booked wake owns the deadline until it is spent."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    wake_at = clock.t + 180 * MIN
+    shell_state.write(tmp_path / "shells", "tg", {"next_wake_at": _iso_utc(wake_at)})
+
+    async def run():
+        host._arm()
+        assert host._scheduler._table["tg"][0] == pytest.approx(wake_at, abs=1)
+        clock.t += 25 * MIN                  # past the idle window
+        await host._fire("tg")               # a kick lands while asleep
+        assert fed == []
+        assert host._scheduler._table["tg"][0] == pytest.approx(wake_at, abs=1)
+        clock.t = wake_at
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 1
+    assert "next_wake_at" not in shell_state.read(tmp_path / "shells", "tg")
+
+
+def test_user_message_cancels_the_booked_wake_and_restarts_the_window(tmp_path):
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"next_wake_at": _iso_utc(clock.t + 180 * MIN)})
+
+    async def run():
+        host._arm()
+        clock.t += 5 * MIN
+        host.on_user_message()
+
+    asyncio.run(run())
+    assert fed == []
+    assert "next_wake_at" not in shell_state.read(tmp_path / "shells", "tg")
+    assert _basis(tmp_path) == pytest.approx(clock.t, abs=1)
+    assert host._scheduler._table["tg"][0] == pytest.approx(clock.t + 20 * MIN, abs=1)
+
+
+def test_restart_continues_the_running_idle_window(tmp_path):
+    """Basis 5min old on disk -> the fresh host owes 15 more minutes, and the
+    boot pass itself feeds nothing."""
+    clock = Clock()
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"last_user_ts": _iso_utc(clock.t - 5 * MIN)})
+    host, _loop, fed = _host(tmp_path, clock)
+
+    async def run():
+        host._arm()
+        assert host._scheduler._table["tg"][0] == pytest.approx(clock.t + 15 * MIN, abs=1)
+        await host._fire("tg")               # kick right after boot
+        assert fed == []
+        clock.t += 15 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 1
+
+
+@pytest.mark.parametrize("ledger", [
+    {"last_user_ts": _iso_utc(1_000_000.0 - 40 * MIN)},   # elapsed
+    {},                                                    # missing
+    {"last_user_ts": "not a timestamp"},                   # corrupt
+    {"last_user_ts": 12345},                               # wrong type
+])
+def test_restart_with_an_unusable_basis_opens_a_full_fresh_window(tmp_path, ledger):
+    """A window being reopened never delivers a note by itself: the basis
+    becomes now, so the first fire is a whole idle window away."""
+    clock = Clock()
+    if ledger:
+        shell_state.write(tmp_path / "shells", "tg", ledger)
+    host, _loop, fed = _host(tmp_path, clock)
+
+    async def run():
+        host._arm()
+        assert host._scheduler._table["tg"][0] == pytest.approx(clock.t + 20 * MIN, abs=1)
+        await host._fire("tg")               # boot pass fires nothing
+        assert fed == []
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 1
+
+
+def test_an_interrupted_feed_still_costs_its_whole_window(tmp_path):
+    """The idle basis is banked before delivery, so a feed that dies mid-flight
+    is not retried and cannot re-fire on the next pass — nor after a restart."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock)
+
+    async def _boom(body):
+        fed.append(body)
+        raise asyncio.CancelledError
+
+    async def _ok(body):
+        fed.append(body)
+        return True
+
+    loop.feed_turn = _boom
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN
+        with pytest.raises(asyncio.CancelledError):
+            await host._fire("tg")
+        fire_ts = clock.t
+        assert _basis(tmp_path) == pytest.approx(fire_ts, abs=1)
+
+        loop.feed_turn = _ok
+        clock.t += 19 * MIN
+        await host._fire("tg")               # next pass: still inside the window
+        assert len(fed) == 1
+        # a restart in the same window owes only the remaining minute
+        restarted, _l, _f = _host(tmp_path, clock)
+        assert restarted._silence_deadline() == pytest.approx(fire_ts + 20 * MIN, abs=1)
+
+        clock.t += 1 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 2
+
+
 # ── directed kick (T10) ───────────────────────────────────────────────────────
 
 def test_pending_note_is_fed_instead_of_the_rendered_note_and_cleared(tmp_path):

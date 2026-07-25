@@ -309,6 +309,16 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "📦 已发货，请在{channel_label}签收 {name}",
         "en": "📦 Shipped to {channel_label}: {name}",
     },
+
+    # ── cortex shell: lie_down / rotate notices ────────────────
+    "shell.lie_down": {
+        "cn": "💤 {min}min {time}",
+        "en": "💤 {min}min {time}",
+    },
+    "shell.rotated": {
+        "cn": "🌙 Rotated {time}",
+        "en": "🌙 Rotated {time}",
+    },
 }
 
 

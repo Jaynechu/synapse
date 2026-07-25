@@ -2,11 +2,15 @@
 
 Off unless [cortex].shell_enabled. When on, the bridge hosts a Scheduler
 (synapse_core.scheduler) as an internal task and owns one deadline for the tg
-shell = the nearer of
+shell:
 
-  * the silence deadline (last user message + idle minutes), and
   * next_wake_at from the shell ledger (<state_dir>/tg.json), written by
-    marrow's lie_down and announced over the kick socket.
+    marrow's lie_down and announced over the kick socket, when one stands — a
+    booked wake suspends the idle cycle instead of racing it; else
+  * the silence deadline (idle basis + idle minutes), where the idle basis is
+    persisted (last_user_ts) so a restart continues the running window.
+
+An inbound user message cancels the booked wake and restarts the window.
 
 Firing feeds one rendered note turn into the resident session; the reply
 streams out to tg like any other turn. Occupancy (same four usage keys cortex
@@ -49,6 +53,9 @@ logger = logging.getLogger(__name__)
 PENDING_NOTE_KEY = "pending_note"
 # Ledger key marrow's lie_down(rotate=True) writes: end this window now.
 ROTATE_KEY = "rotate_pending"
+# Idle basis: start of the current silence window, persisted so a restart
+# continues that window instead of opening a fresh one that fires at once.
+LAST_USER_KEY = "last_user_ts"
 # Today's token ledger: finished sessions' finals + the local date they belong
 # to (cortex reads both to render this shell's "Cortex Today" figure).
 TOKENS_BASE_KEY = "tokens_today_base"
@@ -109,7 +116,7 @@ class ShellHost:
         # inside the scheduler loop.
         self._scheduler = Scheduler(socket_path=cfg.shell_socket_path(),
                                     clock=self._clock)
-        self._last_user_ts = self._clock()
+        self._last_user_ts = self._resume_idle_basis()
         self._feeding = False
 
     # --- lifecycle ------------------------------------------------------
@@ -171,8 +178,24 @@ class ShellHost:
 
     # --- timing ---------------------------------------------------------
 
+    def _idle_window(self) -> float:
+        return self._cfg.shell_idle_min * 60.0
+
+    def _resume_idle_basis(self) -> float:
+        """Idle basis at boot: the ledger's, so a restart continues the window
+        it was in. Missing, unparseable or already elapsed -> now, i.e. a fresh
+        full window — reopening a window never delivers a note by itself."""
+        now = self._clock()
+        ts = parse_wake_at(self._read_state().get(LAST_USER_KEY))
+        return now if ts is None or now - ts >= self._idle_window() else ts
+
+    def _set_idle_basis(self, ts: float, extra: dict | None = None) -> None:
+        """Restart the silence window from `ts` in memory and in the ledger."""
+        self._last_user_ts = ts
+        self._write_state({**(extra or {}), LAST_USER_KEY: _iso(ts)})
+
     def _silence_deadline(self) -> float:
-        return self._last_user_ts + self._cfg.shell_idle_min * 60.0
+        return self._last_user_ts + self._idle_window()
 
     def _deadline(self, state: dict) -> float:
         # A pending direction or rotate is due NOW: this is also what saves a
@@ -183,9 +206,10 @@ class ShellHost:
             return self._clock()
         if str(state.get(PENDING_NOTE_KEY) or "").strip():
             return self._clock()
+        # A booked wake suspends the idle cycle entirely: while next_wake_at
+        # stands it IS the deadline, never raced against the silence one.
         wake = parse_wake_at(state.get("next_wake_at"))
-        silence = self._silence_deadline()
-        return silence if wake is None else min(silence, wake)
+        return self._silence_deadline() if wake is None else wake
 
     def _arm(self, state: dict | None = None) -> None:
         st = self._read_state() if state is None else state
@@ -194,8 +218,9 @@ class ShellHost:
         logger.info("shell armed: next round at %s", _iso(at))
 
     def on_user_message(self) -> None:
-        """Any inbound tg message restarts the silence cycle."""
-        self._last_user_ts = self._clock()
+        """Any inbound tg message cancels a booked wake and restarts the
+        silence cycle from now."""
+        self._set_idle_basis(self._clock(), {"next_wake_at": None})
         self._arm()
 
     # --- fire -----------------------------------------------------------
@@ -219,10 +244,13 @@ class ShellHost:
             self._arm()
             return
         wake = parse_wake_at(state.get("next_wake_at"))
-        if wake is not None and now >= wake:
-            self._write_state({"next_wake_at": None})  # one-shot ledger entry
+        due = wake is not None and now >= wake
+        # Ledger before delivery: the wake is one-shot and the fed round
+        # restarts the silence cycle, so a feed that dies mid-flight still
+        # costs its window instead of re-firing on the next pass.
+        self._set_idle_basis(self._clock(),
+                             {"next_wake_at": None} if due else None)
         await self._feed_note(self._take_pending())
-        self._last_user_ts = self._clock()  # a fed round re-arms the cycle
         self._arm()
 
     def _render_note(self) -> str | None:

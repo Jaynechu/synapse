@@ -33,6 +33,16 @@ logger = logging.getLogger(__name__)
 CHANNEL = "tg"
 
 
+def _whitelist_filter(cfg) -> "filters.BaseFilter | None":
+    """Build the sender gate from the effective whitelist (by Telegram user
+    id, so an allowed sender is recognised in a group too). None = accept-all
+    (caller must log a startup warning)."""
+    ids = cfg.effective_allowed_user_ids()
+    if not ids:
+        return None
+    return filters.User(user_id=set(ids))
+
+
 def main() -> int:
     configure_logging(Path.home() / ".config/marrow/logs/synapse-tg/synapse-tg.log")
     cfg = load_config()
@@ -281,12 +291,22 @@ def main() -> int:
         .post_shutdown(_post_shutdown)
         .build()
     )
-    app.add_handler(MessageHandler(filters.TEXT, loop.on_message))
-    app.add_handler(MessageHandler(filters.PHOTO, loop.on_photo))
-    app.add_handler(MessageHandler(filters.ANIMATION, loop.on_animation))
-    app.add_handler(MessageHandler(filters.Document.ALL, loop.on_document))
-    app.add_handler(MessageHandler(filters.Sticker.ALL, loop.on_sticker))
-    app.add_handler(MessageHandler(filters.VIDEO, loop.on_video))
+    whitelist = _whitelist_filter(cfg)
+    if whitelist is None:
+        logger.warning(
+            "tg bridge accepts inbound messages from ANY user — "
+            "set [tg].chat_id or [tg].allowed_user_ids to restrict"
+        )
+
+    def _gated(f):
+        return f if whitelist is None else whitelist & f
+
+    app.add_handler(MessageHandler(_gated(filters.TEXT), loop.on_message))
+    app.add_handler(MessageHandler(_gated(filters.PHOTO), loop.on_photo))
+    app.add_handler(MessageHandler(_gated(filters.ANIMATION), loop.on_animation))
+    app.add_handler(MessageHandler(_gated(filters.Document.ALL), loop.on_document))
+    app.add_handler(MessageHandler(_gated(filters.Sticker.ALL), loop.on_sticker))
+    app.add_handler(MessageHandler(_gated(filters.VIDEO), loop.on_video))
     app.job_queue.run_repeating(loop.check_flush, interval=0.5, first=0.5)
 
     if cfg.chat_id is None:

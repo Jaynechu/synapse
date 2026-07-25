@@ -64,6 +64,11 @@ class TgConfig:
     outbox_poll_interval_s: float = 5.0
     outbox_retry_max: int = 3
 
+    # Inbound sender whitelist (by Telegram user id). Empty = accept-all (open
+    # door, logged loudly at startup). Explicit allowed_user_ids wins over the
+    # chat_id fallback (private chats: chat_id == user_id).
+    allowed_user_ids: list = field(default_factory=list)
+
     # Watch + kick (P6). kick_cmd = cortex.kick launcher (venv python + module),
     # e.g. ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = watch/kick off.
     outbox_kick_cmd: list = field(default_factory=list)
@@ -111,6 +116,16 @@ class TgConfig:
     def shell_socket_path(self) -> Path:
         return Path(self.shell_socket).expanduser()
 
+    def effective_allowed_user_ids(self) -> list[int]:
+        """Whitelist actually enforced: allowed_user_ids if set, else
+        [chat_id] if set (private chats: chat_id == user_id), else empty
+        (accept-all)."""
+        if self.allowed_user_ids:
+            return list(self.allowed_user_ids)
+        if self.chat_id is not None:
+            return [self.chat_id]
+        return []
+
 
 def load_config(path: Path | None = None) -> TgConfig:
     """Load config.toml; return defaults if absent or malformed."""
@@ -134,6 +149,11 @@ def load_config(path: Path | None = None) -> TgConfig:
         cid = tg.get("chat_id")
         if isinstance(cid, int) and not isinstance(cid, bool):
             cfg.chat_id = cid
+        aui = tg.get("allowed_user_ids")
+        if isinstance(aui, list):
+            cfg.allowed_user_ids = [
+                x for x in aui if isinstance(x, int) and not isinstance(x, bool)
+            ]
 
     outbox = data.get("outbox") or {}
     if isinstance(outbox, dict):
