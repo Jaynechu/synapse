@@ -31,7 +31,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - replay.py — replay last N turns from jsonl for /resume.
 - jsonl_edit.py — atomic truncate for /rewind, /regen.
 - marrow_session.py — record_session upsert, session_cwd resolve.
-- bridge_state_store.py — atomic JSON persist for BridgeState.
+- bridge_state_store.py — atomic JSON persist for BridgeState. Includes state.model_resolved: `--model` token → id cc reported in system/init, written by both loops' init handler, read by /clear + /model acks (display only).
 - last_active.py — {sid, channel, ts} stamp per prompt.
 - health.py — HealthGate: dirty boot detection via boot_ts vs last clean shutdown.
 - alerts.py — AlertSink: file-per-alert + optional mw add-alert.
