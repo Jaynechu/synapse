@@ -844,9 +844,8 @@ def test_rotate_waits_for_an_in_flight_turn(tmp_path):
     assert loop._state.session_id is None
 
 
-def test_shell_rotate_sends_rotated_notice(tmp_path, monkeypatch):
-    """The truthful rotation signal: shell_rotate() sends 🌙 after respawning,
-    to the outbound target (bot attached, no inbound message yet)."""
+def _freeze_now(monkeypatch, loop):
+    """Pin datetime.now() at 22:15 local; return that epoch."""
     import synapse_tg.loop as mod
 
     class _Fixed(mod.datetime):
@@ -855,16 +854,58 @@ def test_shell_rotate_sends_rotated_notice(tmp_path, monkeypatch):
             return cls(2026, 7, 26, 22, 15, tzinfo=tz)
 
     monkeypatch.setattr(mod, "datetime", _Fixed)
+    return _Fixed.now(loop._tz).timestamp()
 
+
+def test_shell_rotate_notice_carries_the_booked_wake(tmp_path, monkeypatch):
+    """The truthful rotation signal: shell_rotate() sends 🌙 after respawning,
+    to the outbound target, announcing the wake the shell just booked."""
     cfg = _cfg(tmp_path, chat_id=4242)
     loop = TgLoop(cfg)
+    now = _freeze_now(monkeypatch, loop)
     bot = FakeBot()
     loop.attach_bot(bot)
 
-    asyncio.run(loop.shell_rotate())
+    asyncio.run(loop.shell_rotate(now + 30 * MIN))
 
-    assert [m["text"] for m in bot.sent] == ["\U0001f319 Rotated 22:15"]
+    assert [m["text"] for m in bot.sent] == ["\U0001f319 Rotated 30min 22:45"]
     assert {m["chat_id"] for m in bot.sent} == {4242}
+
+
+@pytest.mark.parametrize("wake", [None, -5 * MIN, 0.0])
+def test_shell_rotate_notice_bare_without_a_future_wake(tmp_path, monkeypatch, wake):
+    """No wake booked, or one already past: 🌙 alone, no misleading time."""
+    cfg = _cfg(tmp_path, chat_id=4242)
+    loop = TgLoop(cfg)
+    now = _freeze_now(monkeypatch, loop)
+    bot = FakeBot()
+    loop.attach_bot(bot)
+
+    asyncio.run(loop.shell_rotate(None if wake is None else now + wake))
+
+    assert [m["text"] for m in bot.sent] == ["\U0001f319 Rotated"]
+
+
+def test_rotate_fire_passes_the_ledger_wake_to_the_notice(tmp_path):
+    """_fire() reads next_wake_at off the same state dict it claimed the
+    rotate flag from, and hands it to shell_rotate()."""
+    from datetime import datetime, timezone
+
+    clock = Clock()
+    host, loop, _ = _host(tmp_path, clock)
+    seen: list[float | None] = []
+
+    async def _rotate(wake=None):
+        seen.append(wake)
+
+    loop.shell_rotate = _rotate
+    later = datetime.fromtimestamp(clock.t + 30 * MIN, timezone.utc).isoformat()
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"rotate_pending": True, "next_wake_at": later})
+
+    asyncio.run(host._fire("tg"))
+
+    assert seen == [pytest.approx(clock.t + 30 * MIN, abs=1)]
 
 
 def test_shell_rotate_sends_no_notice_without_a_chat_target(tmp_path):

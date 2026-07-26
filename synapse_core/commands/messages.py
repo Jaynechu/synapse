@@ -316,8 +316,12 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "en": "💤 {min}min {time}",
     },
     "shell.rotated": {
-        "cn": "🌙 Rotated {time}",
-        "en": "🌙 Rotated {time}",
+        "cn": "🌙 Rotated",
+        "en": "🌙 Rotated",
+    },
+    "shell.rotated_wake": {
+        "cn": "🌙 Rotated {min}min {time}",
+        "en": "🌙 Rotated {min}min {time}",
     },
 }
 

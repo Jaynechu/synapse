@@ -1241,19 +1241,27 @@ class TgLoop:
         self._swap_provider(None, None)
         logger.info("shell respawn: fresh session")
 
-    async def shell_rotate(self) -> None:
+    async def shell_rotate(self, wake: float | None = None) -> None:
         """lie_down(rotate=True) from the shell: let any in-flight turn finish,
         then drop the session for a fresh one. The lock is what the fuse path
         gets for free by respawning after its turn — a rotate kick can land
         mid-turn. This is the truthful rotation signal (a rotate tool_use
-        alone can be denied by a marrow hook) — send the 🌙 notice here."""
+        alone can be denied by a marrow hook) — send the 🌙 notice here, and
+        carry the booked wake (`wake`, epoch seconds) when there is one."""
         async with self._lock:
             self.shell_respawn()
         bot, chat_id = self._outbound_target()
         if bot is None or chat_id is None:
             return
-        text = messages.t("shell.rotated", self._state.voice_style,
-                          time=self._local_hhmm_plus())
+        mins = 0
+        if wake is not None:
+            mins = round((wake - datetime.now(self._tz).timestamp()) / 60)
+        if mins <= 0:
+            text = messages.t("shell.rotated", self._state.voice_style)
+        else:
+            text = messages.t(
+                "shell.rotated_wake", self._state.voice_style, min=mins,
+                time=datetime.fromtimestamp(wake, self._tz).strftime("%H:%M"))
         try:
             await bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:

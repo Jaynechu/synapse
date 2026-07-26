@@ -248,9 +248,9 @@ class ShellHost:
                 # and asked to end the window. Same machinery as the fuse
                 # respawn minus the fuse prompt; next_wake_at is left
                 # standing, so the fresh session sleeps until the wake it
-                # just booked.
+                # just booked — and the 🌙 notice announces that wake.
                 logger.info("shell rotate: lie_down(rotate=True) — fresh session")
-                await self._loop.shell_rotate()
+                await self._loop.shell_rotate(parse_wake_at(state.get("next_wake_at")))
                 self._arm()
                 return
             wake = parse_wake_at(state.get("next_wake_at"))
