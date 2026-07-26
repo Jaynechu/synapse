@@ -438,10 +438,9 @@ class Registry:
 
     def _handle_clear(self) -> str:
         state = self._ctx.state
-        # B1: every /clear lands on opus-4.6[1m] (or whatever ctx says) so the
-        # user does not silently stay on the last session's model. Both
-        # effort_level and thinking_on persist across /clear — user prefs
-        # stick, only model resets (0614).
+        # Model carries over from the last session unless ctx pins one
+        # (clear_default_model is "" on tg). effort_level and thinking_on
+        # persist too — /clear resets the session, not the user's prefs.
         default_model = self._ctx.clear_default_model or state.model
         # Close cc so the SessionEnd hook archives events into the DB. Events
         # also land per-turn via cc's Stop hook.
