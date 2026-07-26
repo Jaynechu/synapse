@@ -929,11 +929,13 @@ class TgLoop:
 
     def _track(self, bot: Bot, chat_id: int,
                text: str = "", msg_date: datetime | None = None,
-               media_type: str = "") -> None:
+               media_type: str = "", count_activity: bool = True) -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
-        # Any inbound message restarts the cortex shell's silence cycle.
-        if self._shell is not None:
+        # Any inbound message restarts the cortex shell's silence cycle,
+        # except a recognized slash command (on_message passes
+        # count_activity=False so /info etc. don't reset the idle timer).
+        if count_activity and self._shell is not None:
             self._shell.on_user_message()
         # P6: inbound from the authorized recipient drives watch-reply kicks.
         # Any other chat is ignored here. `text` = the reply body, threaded into
@@ -995,7 +997,8 @@ class TgLoop:
         if not text:
             return
         self._track(context.bot, update.message.chat_id, text=text,
-                     msg_date=update.message.date)
+                     msg_date=update.message.date,
+                     count_activity=not self._registry.is_command(text))
 
         action, ack = self._registry.dispatch(text)
         inject = self._registry.pending_rewrite

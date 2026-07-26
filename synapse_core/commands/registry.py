@@ -48,6 +48,17 @@ _EFFORT_LEVELS: frozenset[str] = frozenset(
     {"low", "medium", "high", "xhigh", "max", "ultracode", "auto"}
 )
 
+# Slash command names _dispatch_slash recognizes (mirrors the `if name ==`
+# chain below). Any other leading-"/" text still gets "handled" there (via
+# an unknown.cmd ack) but is_command() below reports it as NOT a known
+# command, so callers (e.g. the tg idle timer) can tell "/info" apart from
+# "/typo". Keep this set in sync with _dispatch_slash's branches.
+_KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset({
+    "info", "status", "usage", "model", "clear", "new", "stop", "help",
+    "resume", "rewind", "regen", "thinking", "quote", "effort", "compact",
+    "voice", "cwd", "diary",
+})
+
 # /cwd presets. Index = digit shown to user; preset 1 is the boot fallback
 # when persisted state.cc_cwd no longer exists on disk. Both bridges override
 # this at boot from their config's [cwd_presets]; the SYNAPSE_CWD_PRESETS env
@@ -249,6 +260,21 @@ class Registry:
     def _t(self, key: str, **vars: object) -> str:
         """Render an ack in the current voice style."""
         return messages.t(key, self._ctx.state.voice_style, **vars)
+
+    def is_command(self, raw: str) -> bool:
+        """Read-only: would `raw` dispatch to a KNOWN slash command name?
+
+        Does not execute anything or mutate state. Used by bridges to gate
+        side effects (e.g. tg's idle-timer reset) on recognized commands
+        only, not on any leading-"/" text.
+        """
+        if raw is None:
+            return False
+        text = raw.strip()
+        if not text.startswith("/"):
+            return False
+        head, _, _ = text[1:].partition(" ")
+        return head.lower() in _KNOWN_SLASH_COMMANDS
 
     def dispatch(self, raw: str) -> DispatchResult:
         self._pending_rewrite = None
