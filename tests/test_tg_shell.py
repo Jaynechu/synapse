@@ -109,6 +109,8 @@ def _cfg(tmp_path, **kw):
     base = dict(
         data_dir=tmp_path / "tg-data",
         shell_enabled=True,
+        # Parent of marrow_db = the shared config dir the breaker files live in.
+        marrow_db=str(tmp_path / "marrow.db"),
         shell_state_dir=str(tmp_path / "shells"),
         shell_socket=str(tmp_path / "s.sock"),
         shell_idle_min=20.0,

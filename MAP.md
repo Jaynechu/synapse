@@ -42,6 +42,8 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - commands/messages.py — t(key, style) cn/en ack pairs. Only path for user-facing acks.
 - commands/aliases.py — MODEL_ALIASES (5/fable/opus/sonnet/haiku).
 - commands/marrow_audit.py — mm-/mm+ direct sqlite to marrow.db.
+- shell_state.py — per-shell cortex ledger `<state_dir>/<shell>.json` (flock + atomic replace). Protocol shared with marrow/cortex, code never imported across repos.
+- breaker.py — circuit breaker, bridge side (§9.1).
 - sessionend/tracker.py — SessionTracker: sessions.json, RLock + atomic write.
 - sessionend/idle.py — IdleFireLoop: 30min scan, cross-channel cleanup, mid_scan subprocess spawn, .mid_fired markers.
 
@@ -98,6 +100,20 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - [tg] Retry: python-telegram-bot built-in + custom backoff.
 - [wx] iLink retry: @with_retry exp backoff cap 5. SleepWakeObserver. cc stderr drain (deadlock prevention).
 - Launchd KeepAlive + 30s throttle (both channels).
+
+### 9.1 Circuit breaker (`synapse_core/breaker.py`) — the cortex main switch
+
+- ONE persistent file stops the cortex shell's AUTONOMOUS activity (fed rounds / respawn-driven rounds) for the shells it covers. **The bridge itself keeps running and normal tg/wx chat is completely unaffected** — inbound messages flow, sessions spawn from user turns as usual. Survives every restart; only an explicit clear releases it.
+- **State file** `<marrow config dir>/breaker.json` (= parent of `[marrow].db`, `TgConfig.marrow_config_dir()`):
+  `{"scope": "all"|"cli"|"tg", "reason": "auto_fuse"|"manual", "ts": "<local iso>"}`.
+  File ABSENT = clear. Corrupt / wrong-shape / empty scope = read as CLEAR + one warning (a broken breaker must never wedge the bridge). flock on a `.lock` sibling, tmp+`os.replace` write.
+- **Fuse tally** `<marrow config dir>/fuse_events.json`: `{"events": [{"ts": "<iso>", "shell": "cli"|"tg"}, ...]}`. BOTH shells append here; entries older than `window_hours` are pruned on every write, so the post-write length IS the rolling cross-shell count.
+- **The JSON file IS the cross-repo protocol** — cortex ships its own independent copy (`cortex/breaker.py`). Schema shared, code never imported (same rule as shell_state.py).
+- **Config: marrow only.** `[cortex.breaker]` in `~/.config/marrow/config.toml` (`enabled` / `fuse_threshold` / `window_hours` / `trip_message` / `pause_message` / `clear_message`), read directly by `breaker.settings()`. Deliberately NOT duplicated into the tg bridge config.
+- **Choke point (tg)**: `ShellHost._fire` returns before feeding when `_breaker_holds()`. The ledger (`next_wake_at` / `pending_note` / `rotate_pending`) is left INTACT, so whatever was due delivers on the first round after a clear. It re-arms one idle window into the future so a past-due deadline cannot spin the scheduler.
+- **Auto trip (tg)**: `ShellHost.after_turn`'s fuse branch calls `_record_fuse()` first → `breaker.record_fuse_and_maybe_trip(dir, "tg")`. Count >= `fuse_threshold` and `enabled` → scope="all", reason="auto_fuse"; `enabled = false` still tallies, never trips. On trip: a `critical` / `cortex_breaker_tripped` row via the loop's AlertSink plus a direct `bot.send_message` notice. The wrap-up FUSE prompt is then skipped (it is an autonomous feed), but `shell_respawn()` still runs — it only drops the oversized session; a fresh one is created by the next inbound user message.
+- Clearing is cortex-side only (`ct-wake` / `cortex.ctl resume`) — the bridge never clears the breaker.
+- Layering: the breaker is the OPERATIONAL switch. `[cortex] shell_enabled` here, `[core].shells` in cortex and `[cortex].shells` in marrow are DEVELOPER-LAYER wiring ("is this shell installed at all") — not the way to pause or disable cortex.
 
 ## 10. Config and paths
 

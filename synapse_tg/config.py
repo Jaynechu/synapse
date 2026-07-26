@@ -116,6 +116,12 @@ class TgConfig:
     def shell_socket_path(self) -> Path:
         return Path(self.shell_socket).expanduser()
 
+    def marrow_config_dir(self) -> Path:
+        """The shared marrow config/state dir (parent of marrow.db). Home of
+        config.toml, breaker.json and fuse_events.json — the cross-repo
+        protocol files marrow, cortex and this bridge all read."""
+        return Path(self.marrow_db).expanduser().parent
+
     def effective_allowed_user_ids(self) -> list[int]:
         """Whitelist actually enforced: allowed_user_ids if set, else
         [chat_id] if set (private chats: chat_id == user_id), else empty

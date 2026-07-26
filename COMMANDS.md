@@ -35,6 +35,14 @@
 - sonnet → Sonnet 4.6
 - haiku → Haiku 4.5
 
+## Cortex circuit breaker (not a bridge command)
+
+- Stops cortex autonomous activity (fed rounds / auto wake). Bridge and normal chat unaffected.
+- Persistent across restarts. State: `~/.config/marrow/breaker.json` (MAP.md §9.1).
+- On: `/ct-pause` in cc cli (`cortex.ctl pause [--shell cli|tg]`).
+- Off: `/ct-wake` (clear + wake) or `cortex.ctl resume` (clear only). Show: `cortex.ctl status`.
+- Auto-trips after `[cortex.breaker].fuse_threshold` fuses within `window_hours` (marrow config.toml).
+
 ## Hold words
 
 - 等 / 稍等 / 等等 / 先 — hold 10s instead of 5s before flush

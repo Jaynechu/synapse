@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from synapse_core import shell_state
+from synapse_core import breaker, shell_state
 from synapse_core.scheduler import Scheduler
 
 if TYPE_CHECKING:
@@ -151,6 +151,59 @@ class ShellHost:
         except OSError as e:
             logger.warning("shell state write failed: %s", e)
 
+    # --- circuit breaker -------------------------------------------------
+
+    def _breaker_holds(self) -> bool:
+        """Is this shell held by the circuit breaker? Never raises — an
+        unreadable breaker reads as clear, so the bridge cannot be wedged by a
+        broken state file."""
+        try:
+            held = breaker.covers(self._cfg.marrow_config_dir(), self._shell)
+        except Exception:  # noqa: BLE001 — a breaker read must never kill a round
+            logger.exception("breaker read failed — treating as clear")
+            return False
+        if held:
+            logger.info("shell %s: breaker held — autonomous round skipped",
+                        self._shell)
+        return held
+
+    async def _record_fuse(self) -> None:
+        """Tally this tg fuse in the shared rolling window and, on a threshold
+        breach, trip the breaker for ALL shells + announce it (alert row via
+        the loop's sink, plus a direct tg message). Best-effort throughout: the
+        fuse ladder must run even when the tally or the notice fails."""
+        config_dir = self._cfg.marrow_config_dir()
+        try:
+            count, tripped = await asyncio.to_thread(
+                breaker.record_fuse_and_maybe_trip, config_dir, self._shell)
+        except Exception:  # noqa: BLE001
+            logger.exception("breaker: fuse tally failed")
+            return
+        logger.info("breaker: fuse recorded (%s), %d in window", self._shell, count)
+        if tripped is None:
+            return
+        message = breaker.trip_message(config_dir, count, tripped["scope"])
+        logger.warning("breaker TRIPPED scope=%s reason=%s",
+                       tripped["scope"], tripped["reason"])
+        alerts = getattr(self._loop, "_alerts", None)
+        if alerts is not None:
+            try:
+                alerts.write("critical", "cortex_breaker_tripped", message,
+                             source="shell.after_turn",
+                             fingerprint="cortex_breaker_tripped")
+            except Exception:  # noqa: BLE001
+                logger.exception("breaker: alert write failed")
+        await self._notify(message)
+
+    async def _notify(self, text: str) -> None:
+        bot, chat_id = self._loop._outbound_target()
+        if bot is None or chat_id is None:
+            return
+        try:
+            await bot.send_message(chat_id=chat_id, text=text)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("breaker notice send failed: %s", e)
+
     # --- today ledger ----------------------------------------------------
 
     def _local_date(self) -> str:
@@ -250,6 +303,16 @@ class ShellHost:
             now = self._clock()
             if now < self._deadline(state):
                 self._arm(state)
+                return
+            # Circuit breaker: no autonomous round while this shell is held.
+            # The ledger (next_wake_at / pending_note / rotate) is left intact,
+            # so whatever was due fires on the first round after the breaker
+            # clears. Inbound user messages keep flowing — normal chat is
+            # unaffected. Re-arm one idle window out so a past-due deadline
+            # cannot spin the scheduler.
+            if self._breaker_holds():
+                self._scheduler.schedule(self._shell,
+                                         now + self._idle_window(), self._fire)
                 return
             if self._take_rotate():
                 # lie_down(rotate=True): the resident has written its handoff
@@ -395,7 +458,17 @@ class ShellHost:
         if self._feeding or fuse <= 0 or occ < fuse:
             return
         logger.info("shell fuse: occupancy=%d >= %d — feeding fuse prompt", occ, fuse)
-        await self._feed(f"{self._cfg.shell_fuse_tag}\n{self._cfg.shell_fuse_prompt_text}".strip())
+        # Tally first: this fuse counts towards the breaker whether or not the
+        # wrap-up prompt below lands.
+        await self._record_fuse()
+        # The wrap-up prompt is an autonomous feed -> skipped while held (which
+        # includes a breaker this very fuse just tripped). The respawn is NOT
+        # skipped: it only drops the oversized session (a fresh one is created
+        # by the next inbound user message, i.e. normal chat), and leaving a
+        # fused window resident would burn tokens on every reply.
+        if not self._breaker_holds():
+            await self._feed(
+                f"{self._cfg.shell_fuse_tag}\n{self._cfg.shell_fuse_prompt_text}".strip())
         self._loop.shell_respawn()  # folds today's ledger on the way through
 
 
