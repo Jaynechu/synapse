@@ -47,7 +47,9 @@ shell_idle_min = 20
 # Pass `--shell <shell_id>` so cortex drops THIS shell's own channel from the
 # note's Replay section — without it the shell replays its own conversation
 # back at itself every round.
-# e.g. ["~/CC-Lab/cortex/.venv/bin/python", "-m", "cortex.note_render", "--shell", "tg"]
+# Pass `--no-ct` too: the marrow hook delivers ct-targeted notes via its outbox,
+# so a render that also peeks them doubles them in the same payload.
+# e.g. ["~/CC-Lab/cortex/.venv/bin/python", "-m", "cortex.note_render", "--no-ct", "--shell", "tg"]
 note_render_cmd = []
 note_render_timeout_s = 20
 # Machine tag opening a fed turn — must be a marrow [cortex].machine_markers
