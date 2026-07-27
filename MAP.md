@@ -97,6 +97,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - AlertSink: file per alert + optional mw add-alert.
 - HealthGate: dirty boot detection → alert.
 - Provider death gate: session_id set = fake (swap killed), empty = real → critical.
+- [tg] Shell note render: `note_render_alert_after` (3) consecutive failures → one `warn` / `shell_note_render_failed` alert; exit-0 resets the streak.
 - [tg] Retry: python-telegram-bot built-in + custom backoff.
 - [wx] iLink retry: @with_retry exp backoff cap 5. SleepWakeObserver. cc stderr drain (deadlock prevention).
 - Launchd KeepAlive + 30s throttle (both channels).
