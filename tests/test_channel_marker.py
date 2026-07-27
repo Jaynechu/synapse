@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from synapse_core import last_active as _real_last_active
 from synapse_wx.hooks.channel_marker import (
     _previous_channel,
     _stamp_last_active,
@@ -13,16 +14,16 @@ class _FakeReader:
     def __init__(self, data: dict | None) -> None:
         self.data = data
 
-    def read(self) -> dict | None:
+    def read(self, path) -> dict | None:
         return self.data
 
 
 class _FakeWriter:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, float]] = []
+        self.calls: list[tuple[object, str, str, float]] = []
 
-    def write(self, sid: str, channel: str, ts: float) -> None:
-        self.calls.append((sid, channel, ts))
+    def write(self, path, sid: str, channel: str, ts: float) -> None:
+        self.calls.append((path, sid, channel, ts))
 
 
 def test_no_env_defaults_to_cli() -> None:
@@ -146,7 +147,7 @@ def test_stamp_last_active_writes_when_sid_present() -> None:
     writer = _FakeWriter()
     _stamp_last_active("abc", "cli", writer=writer)
     assert len(writer.calls) == 1
-    sid, channel, ts = writer.calls[0]
+    _path, sid, channel, ts = writer.calls[0]
     assert sid == "abc"
     assert channel == "cli"
     assert ts > 0
@@ -164,3 +165,18 @@ def test_stamp_last_active_swallows_writer_error() -> None:
             raise RuntimeError("boom")
 
     _stamp_last_active("abc", "cli", writer=_Boom())
+
+
+def test_real_last_active_roundtrip(tmp_path, monkeypatch) -> None:
+    """Regression: hook must call the real read(path)/write(path, sid,
+    channel, ts) signatures — a future signature drift must fail here,
+    not be masked by fakes."""
+    from synapse_wx.hooks import channel_marker
+
+    monkeypatch.setattr(channel_marker, "LAST_ACTIVE_PATH", tmp_path / "last_active.json")
+
+    assert _previous_channel("abc", reader=_real_last_active) == ""
+
+    _stamp_last_active("abc", "wx", writer=_real_last_active)
+    assert _previous_channel("abc", reader=_real_last_active) == "wx"
+    assert _previous_channel("other-sid", reader=_real_last_active) == ""
