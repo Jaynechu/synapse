@@ -95,7 +95,9 @@ def parse_wake_at(raw) -> float | None:
 
 
 def _tzinfo(name: str):
-    """Configured display timezone; unknown name -> None (system local)."""
+    """Configured display timezone; empty/unknown name -> None (system local)."""
+    if not (name or "").strip():
+        return None
     try:
         return ZoneInfo(name)
     except Exception:  # noqa: BLE001 — a bad tz name must not kill the bridge

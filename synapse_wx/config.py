@@ -91,7 +91,8 @@ class Config:
     # Marks a delivered note as bridge-sent (vs the resident session's own
     # chat), so her phone can tell them apart at a glance. Empty disables.
     outbox_note_prefix: str = "\U0001f4ee "
-    timezone: str = "Australia/Melbourne"
+    # Empty = follow the OS timezone; set an IANA name to pin it.
+    timezone: str = ""
 
     # /cwd presets from [cwd_presets] — digit -> absolute path
     cwd_presets: dict | None = None

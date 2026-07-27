@@ -297,10 +297,10 @@ def main() -> int:
     _DIARY_SCRIPT = "\n".join([
         "import sys,json",
         "from datetime import datetime,timedelta",
-        "from zoneinfo import ZoneInfo",
+        "from marrow.config import get_tz",
         "from marrow.timecue import parse_time_cue",
         "from marrow.daemon import recall",
-        "_m=ZoneInfo('Australia/Melbourne')",
+        "_m=get_tz()",
         "cue=parse_time_cue(sys.stdin.read().strip(),datetime.now(_m))",
         "if not cue:print('null');sys.exit(0)",
         "s=datetime.fromisoformat(cue.since_utc).astimezone(_m).strftime('%Y-%m-%d')",
