@@ -831,6 +831,32 @@ def test_rotate_with_zero_minutes_wakes_the_fresh_session_at_once(tmp_path):
     assert fed[1].startswith("⏳ [NEW ROUND]") and "NOTE BODY" in fed[1]
 
 
+def test_rotate_without_a_booked_wake_opens_a_fresh_idle_window(tmp_path):
+    """A rotate ends a spent window: the new session must get a whole
+    shell_idle_min of silence, not a note on the very next tick."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    d = tmp_path / "shells"
+
+    async def run():
+        host._arm()
+        clock.t += 20 * MIN                  # the window that led to the rotate
+        shell_state.write(d, "tg", {"rotate_pending": True})
+        await host._fire("tg")
+        assert fed == ["__RESPAWN__"]
+        rotated_at = clock.t
+        assert _basis(tmp_path) == pytest.approx(rotated_at, abs=1)
+        assert host._scheduler._table["tg"][0] == pytest.approx(
+            rotated_at + 20 * MIN, abs=1)
+        await host._fire("tg")               # next scheduler pass: nothing due
+        assert fed == ["__RESPAWN__"]
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert fed[1].startswith("⏳ [NEW ROUND]")
+
+
 def test_rotate_waits_for_an_in_flight_turn(tmp_path):
     """A rotate kick can land mid-turn; the respawn must not cut the stream."""
     cfg = _cfg(tmp_path)

@@ -315,6 +315,11 @@ class ShellHost:
                 # standing, so the fresh session sleeps until the wake it
                 # just booked — and the 🌙 notice announces that wake.
                 logger.info("shell rotate: lie_down(rotate=True) — fresh session")
+                # A fresh session opens a fresh silence window: the pre-rotate
+                # basis is already spent, so without this the re-arm below
+                # would be due at once and feed a note into a brand-new
+                # session on the next tick.
+                self._set_idle_basis(self._clock())
                 await self._loop.shell_rotate(parse_wake_at(state.get("next_wake_at")))
                 self._arm()
                 return
