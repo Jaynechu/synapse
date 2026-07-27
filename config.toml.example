@@ -43,6 +43,8 @@ shell_id = "tg"
 shell_state_dir = "~/.config/marrow/state/shells"
 shell_socket = "~/.config/marrow/state/shells/tg.sock"
 # Minutes of user silence before one rendered note turn is fed to the resident.
+# Keep in step with cortex's [watchdog].silent_max_min (the cli shell's
+# free-round cycle) — same cadence on both shells.
 shell_idle_min = 20
 # argv printing the wakeup note on stdout. Empty = every round is skipped.
 # Pass `--shell <shell_id>` so cortex drops THIS shell's own channel from the
@@ -53,6 +55,9 @@ shell_idle_min = 20
 # e.g. ["~/CC-Lab/cortex/.venv/bin/python", "-m", "cortex.note_render", "--no-ct", "--shell", "tg"]
 note_render_cmd = []
 note_render_timeout_s = 20
+# Consecutive render failures that raise one alert (a broken renderer mutes
+# every autonomous round silently). 0 = never alert.
+note_render_alert_after = 3
 # Machine tag opening a fed turn — must be a marrow [cortex].machine_markers
 # member, else the fed note reads as a real user message.
 shell_note_tag = "⏳ [NEW ROUND]"

@@ -91,12 +91,17 @@ class TgConfig:
     shell_state_dir: str = "~/.config/marrow/state/shells"
     shell_socket: str = "~/.config/marrow/state/shells/tg.sock"
     # Minutes of user silence before one rendered note turn is fed in.
+    # Cross-repo contract: keep in step with cortex's [watchdog].silent_max_min
+    # (the cli shell's free-round cycle), also 20.
     shell_idle_min: float = 20.0
     # argv rendering the wakeup note on stdout, e.g.
     # ["/path/cortex/.venv/bin/python", "-m", "cortex.note_render"].
     # Empty = the silence cycle logs and skips every round.
     shell_note_render_cmd: list = field(default_factory=list)
     shell_note_render_timeout_s: float = 20.0
+    # Consecutive render failures that raise one alert (a broken renderer
+    # silently mutes every autonomous round). 0 = never alert.
+    shell_note_render_alert_after: int = 3
     # Machine tag opening a fed turn (must be a marrow [cortex].machine_markers
     # member, else the fed note reads as a real user message).
     shell_note_tag: str = "⏳ [NEW ROUND]"
@@ -232,6 +237,9 @@ def load_config(path: Path | None = None) -> TgConfig:
         rt = cortex.get("note_render_timeout_s")
         if isinstance(rt, (int, float)) and not isinstance(rt, bool) and rt > 0:
             cfg.shell_note_render_timeout_s = float(rt)
+        ra = cortex.get("note_render_alert_after")
+        if isinstance(ra, int) and not isinstance(ra, bool) and ra >= 0:
+            cfg.shell_note_render_alert_after = ra
         ft = cortex.get("fuse_tokens")
         if isinstance(ft, int) and not isinstance(ft, bool) and ft >= 0:
             cfg.shell_fuse_tokens = ft

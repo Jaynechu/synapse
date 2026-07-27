@@ -120,6 +120,10 @@ class ShellHost:
                                     clock=self._clock)
         self._last_user_ts = self._resume_idle_basis()
         self._feeding = False
+        # Consecutive note-render failures + whether this streak already
+        # alerted (one alert per streak, not one per round).
+        self._render_fails = 0
+        self._render_alerted = False
 
     # --- lifecycle ------------------------------------------------------
 
@@ -343,6 +347,7 @@ class ShellHost:
         cmd = self._cfg.shell_note_render_cmd
         if not cmd:
             logger.warning("shell note render: [cortex].note_render_cmd unset — round skipped")
+            self._render_failed("[cortex].note_render_cmd unset")
             return None
         try:
             proc = subprocess.run(
@@ -351,12 +356,40 @@ class ShellHost:
             )
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning("shell note render failed: %s", e)
+            self._render_failed(str(e))
             return None
         if proc.returncode != 0:
             logger.warning("shell note render exited %d: %s",
                            proc.returncode, (proc.stderr or "")[:200])
+            self._render_failed(
+                f"exit {proc.returncode}: {(proc.stderr or '').strip()[:200]}")
             return None
+        # Exit 0 with empty output = a quiet round, not a broken renderer.
+        self._render_fails = 0
+        self._render_alerted = False
         return (proc.stdout or "").strip() or None
+
+    def _render_failed(self, detail: str) -> None:
+        """Count a failed render and, once the streak reaches the configured
+        bar, raise ONE alert: a permanently broken renderer mutes every
+        autonomous round and is otherwise only visible in the log."""
+        self._render_fails += 1
+        bar = self._cfg.shell_note_render_alert_after
+        if bar <= 0 or self._render_fails < bar or self._render_alerted:
+            return
+        self._render_alerted = True
+        alerts = getattr(self._loop, "_alerts", None)
+        if alerts is None:
+            return
+        try:
+            alerts.write(
+                "warn", "shell_note_render_failed",
+                f"shell {self._shell}: note render failed {self._render_fails}x "
+                f"in a row — autonomous rounds are muted. Last error: {detail}",
+                source="shell.render_note",
+                fingerprint="shell_note_render_failed")
+        except Exception:  # noqa: BLE001 — an alert must not kill the cycle
+            logger.exception("shell note render: alert write failed")
 
     def _take_rotate(self) -> bool:
         """Claim marrow's rotate flag (read+clear under one lock), so a rotate

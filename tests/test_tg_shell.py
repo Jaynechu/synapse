@@ -236,6 +236,117 @@ def test_render_cmd_unset_skips_the_round(tmp_path):
     assert host._render_note() is None
 
 
+# ── render failure alert ──────────────────────────────────────────────────────
+
+class _RecordingAlerts:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def write(self, severity, kind, message, source="", *, fingerprint=None):
+        self.rows.append({"severity": severity, "kind": kind, "message": message,
+                          "source": source, "fingerprint": fingerprint})
+
+
+class _FakeRun:
+    """Stands in for subprocess.run at the render boundary — no real spawn."""
+
+    def __init__(self, rc=1, out="") -> None:
+        self.rc = rc
+        self.out = out
+        self.calls = 0
+
+    def __call__(self, *_a, **_kw):
+        self.calls += 1
+        import subprocess as sp
+        return sp.CompletedProcess([], self.rc, stdout=self.out, stderr="boom")
+
+
+@pytest.fixture
+def fake_run(monkeypatch):
+    runner = _FakeRun()
+    monkeypatch.setattr("synapse_tg.shell.subprocess.run", runner)
+    return runner
+
+
+def _alerting_host(tmp_path, **kw):
+    cfg = _cfg(tmp_path, **kw)
+    loop = TgLoop(cfg)
+    alerts = _RecordingAlerts()
+    loop._alerts = alerts
+    return ShellHost(cfg, loop, clock=Clock()), alerts
+
+
+def test_render_failures_alert_once_at_the_threshold(tmp_path, fake_run):
+    """A renderer that keeps failing mutes every autonomous round — the third
+    failure raises exactly one alert, not one per round."""
+    host, alerts = _alerting_host(tmp_path)
+    for _ in range(5):
+        assert host._render_note() is None
+    assert len(alerts.rows) == 1
+    row = alerts.rows[0]
+    assert row["severity"] == "warn"
+    assert row["kind"] == "shell_note_render_failed"
+    assert row["fingerprint"] == "shell_note_render_failed"
+    assert "3x" in row["message"]
+
+
+def test_render_failures_below_the_threshold_do_not_alert(tmp_path, fake_run):
+    host, alerts = _alerting_host(tmp_path)
+    host._render_note()
+    host._render_note()
+    assert alerts.rows == []
+
+
+def test_a_successful_render_resets_the_failure_streak(tmp_path, fake_run):
+    """Two failures, a good round, two more failures -> still silent; the
+    streak restarts, so a flaky renderer never trips the alert."""
+    host, alerts = _alerting_host(tmp_path)
+    host._render_note()
+    host._render_note()
+    fake_run.rc = 0                                 # exit 0, empty note
+    assert host._render_note() is None
+    fake_run.rc = 1
+    host._render_note()
+    host._render_note()
+    assert alerts.rows == []
+    host._render_note()
+    assert len(alerts.rows) == 1
+
+
+def test_render_spawn_error_counts_towards_the_alert(tmp_path, monkeypatch):
+    def _boom(*_a, **_kw):
+        raise OSError("no such renderer")
+
+    monkeypatch.setattr("synapse_tg.shell.subprocess.run", _boom)
+    host, alerts = _alerting_host(tmp_path)
+    for _ in range(3):
+        assert host._render_note() is None
+    assert len(alerts.rows) == 1
+    assert "no such renderer" in alerts.rows[0]["message"]
+
+
+def test_missing_render_cmd_also_counts_towards_the_alert(tmp_path):
+    host, alerts = _alerting_host(tmp_path, shell_note_render_cmd=[])
+    for _ in range(3):
+        host._render_note()
+    assert len(alerts.rows) == 1
+    assert "note_render_cmd unset" in alerts.rows[0]["message"]
+
+
+def test_render_alert_can_be_switched_off(tmp_path, fake_run):
+    host, alerts = _alerting_host(tmp_path, shell_note_render_alert_after=0)
+    for _ in range(5):
+        host._render_note()
+    assert alerts.rows == []
+
+
+def test_render_failure_without_an_alert_sink_still_skips_cleanly(tmp_path, fake_run):
+    cfg = _cfg(tmp_path)
+    host = ShellHost(cfg, TgLoop(cfg), clock=Clock())   # loop._alerts is None
+    for _ in range(4):
+        assert host._render_note() is None
+
+
 # ── wake ledger ───────────────────────────────────────────────────────────────
 
 def test_due_next_wake_at_feeds_a_note_and_consumes_the_ledger(tmp_path):
@@ -1023,11 +1134,13 @@ def test_config_parses_the_cortex_section(tmp_path):
         'shell_id = "tg"\n'
         'shell_idle_min = 5\n'
         'note_render_cmd = ["py", "-m", "cortex.note_render"]\n'
+        'note_render_alert_after = 5\n'
         'fuse_tokens = 1234\n'
     )
     cfg = load_config(p)
     assert cfg.shell_idle_min == 5.0
     assert cfg.shell_note_render_cmd == ["py", "-m", "cortex.note_render"]
+    assert cfg.shell_note_render_alert_after == 5
     assert cfg.shell_fuse_tokens == 1234
 
 
