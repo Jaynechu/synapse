@@ -162,7 +162,7 @@ class TgLoop:
         # Resident idle listener: drains unsolicited (background-task) turns
         # between sends so they never rot in the stdout queue and mispair.
         self._listener_stop = asyncio.Event()
-        # Cortex shell host (T9), attached by __main__ when shell_enabled.
+        # Cortex shell host (T9), attached by __main__ when shell_active().
         # None = plain relay resident, every shell branch below is skipped.
         self._shell = None
 
@@ -342,8 +342,9 @@ class TgLoop:
             idle_hard_s=cfg.idle_hard_s,
             turn_output_cap=cfg.turn_output_cap,
             # Cortex shell id — marrow reads MARROW_CORTEX to decide whether
-            # this resident gets the cortex tools/hooks (T8).
-            extra_env={"MARROW_CORTEX": cfg.shell_id} if cfg.shell_enabled else None,
+            # this resident gets the cortex tools/hooks (T8). Gate: T7 single
+            # source (marrow's [cortex].shells), no local enable flag.
+            extra_env={"MARROW_CORTEX": cfg.shell_id} if cfg.shell_active() else None,
         )
 
     def ensure_provider(self) -> None:

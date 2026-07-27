@@ -105,10 +105,14 @@ class Clock:
 
 
 def _cfg(tmp_path, **kw):
+    # Marrow config dir = parent of marrow_db (shared with breaker files).
+    # shell_active() reads [cortex].shells from here (T7 single source) —
+    # write it so ShellHost tests see the shell as active by default.
+    marrow_cfg = tmp_path / "config.toml"
+    if not marrow_cfg.exists():
+        marrow_cfg.write_text('[cortex]\nshells = ["tg"]\n')
     base = dict(
         data_dir=tmp_path / "tg-data",
-        shell_enabled=True,
-        # Parent of marrow_db = the shared config dir the breaker files live in.
         marrow_db=str(tmp_path / "marrow.db"),
         shell_state_dir=str(tmp_path / "shells"),
         shell_socket=str(tmp_path / "s.sock"),
@@ -961,15 +965,22 @@ def test_feed_turn_without_a_chat_target_is_skipped(tmp_path):
     assert asyncio.run(loop.feed_turn("x")) is False
 
 
-# ── enable switch ─────────────────────────────────────────────────────────────
+# ── enable switch (T7: marrow [cortex].shells single source) ──────────────────
 
-def test_shell_disabled_injects_no_cortex_env(tmp_path):
-    loop = TgLoop(TgConfig(data_dir=tmp_path / "d"))
+def test_shell_off_when_marrow_config_absent_injects_no_cortex_env(tmp_path):
+    """Missing marrow config -> shell off (standalone-synapse fallback)."""
+    loop = TgLoop(TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db")))
     assert loop._make_provider().extra_env == {}
     assert loop._shell is None
 
 
-def test_shell_enabled_injects_the_shell_id(tmp_path):
+def test_shell_off_when_tg_absent_from_marrow_shells(tmp_path):
+    (tmp_path / "config.toml").write_text('[cortex]\nshells = ["cli"]\n')
+    loop = TgLoop(TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db")))
+    assert loop._make_provider().extra_env == {}
+
+
+def test_shell_active_injects_the_shell_id(tmp_path):
     loop = TgLoop(_cfg(tmp_path))
     assert loop._make_provider().extra_env == {"MARROW_CORTEX": "tg"}
 
@@ -979,23 +990,28 @@ def test_shell_after_turn_is_a_noop_without_a_host(tmp_path):
     asyncio.run(loop._shell_after_turn())        # must not raise
 
 
-def test_config_defaults_shell_off_and_parses_the_section(tmp_path):
+def test_config_parses_the_cortex_section(tmp_path):
     p = tmp_path / "config.toml"
-    p.write_text("")
-    assert load_config(p).shell_enabled is False
     p.write_text(
         '[cortex]\n'
-        'shell_enabled = true\n'
         'shell_id = "tg"\n'
         'shell_idle_min = 5\n'
         'note_render_cmd = ["py", "-m", "cortex.note_render"]\n'
         'fuse_tokens = 1234\n'
     )
     cfg = load_config(p)
-    assert cfg.shell_enabled is True
     assert cfg.shell_idle_min == 5.0
     assert cfg.shell_note_render_cmd == ["py", "-m", "cortex.note_render"]
     assert cfg.shell_fuse_tokens == 1234
+
+
+def test_config_leftover_shell_enabled_key_warns_not_fatal(tmp_path, caplog):
+    p = tmp_path / "config.toml"
+    p.write_text('[cortex]\nshell_enabled = true\n')
+    with caplog.at_level("WARNING"):
+        cfg = load_config(p)
+    assert any("shell_enabled" in r.message for r in caplog.records)
+    assert not hasattr(cfg, "shell_enabled")
 
 
 # ── state file protocol ───────────────────────────────────────────────────────

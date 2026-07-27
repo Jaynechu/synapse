@@ -1,6 +1,7 @@
 """Cortex shell host for the tg bridge: silence cycle, wake ledger, token fuse.
 
-Off unless [cortex].shell_enabled. When on, the bridge hosts a Scheduler
+Off unless shell_id is in marrow's [cortex].shells (T7, cfg.shell_active()).
+When on, the bridge hosts a Scheduler
 (synapse_core.scheduler) as an internal task and owns one deadline for the tg
 shell:
 

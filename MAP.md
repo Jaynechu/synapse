@@ -113,7 +113,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - **Choke point (tg)**: `ShellHost._fire` returns before feeding when `_breaker_holds()`. The ledger (`next_wake_at` / `pending_note` / `rotate_pending`) is left INTACT, so whatever was due delivers on the first round after a clear. It re-arms one idle window into the future so a past-due deadline cannot spin the scheduler.
 - **Auto trip (tg)**: `ShellHost.after_turn`'s fuse branch calls `_record_fuse()` first → `breaker.record_fuse_and_maybe_trip(dir, "tg")`. Count >= `fuse_threshold` and `enabled` → scope="all", reason="auto_fuse"; `enabled = false` still tallies, never trips. On trip: a `critical` / `cortex_breaker_tripped` row via the loop's AlertSink plus a direct `bot.send_message` notice. The wrap-up FUSE prompt is then skipped (it is an autonomous feed), but `shell_respawn()` still runs — it only drops the oversized session; a fresh one is created by the next inbound user message.
 - Clearing is cortex-side only (`ct-wake` / `cortex.ctl resume`) — the bridge never clears the breaker.
-- Layering: the breaker is the OPERATIONAL switch. `[cortex] shell_enabled` here, `[core].shells` in cortex and `[cortex].shells` in marrow are DEVELOPER-LAYER wiring ("is this shell installed at all") — not the way to pause or disable cortex.
+- Layering: the breaker is the OPERATIONAL switch. `[cortex].shells` in marrow config (single source, T7: `TgConfig.shell_active()` reads it directly, no local enable flag) is DEVELOPER-LAYER wiring ("is this shell installed at all") — not the way to pause or disable cortex.
 
 ## 10. Config and paths
 

@@ -245,7 +245,8 @@ def main() -> int:
     # no send is pending so they deliver on completion instead of mispairing.
     listener_box: dict = {"task": None}
     # Cortex shell host (T9): scheduler task owning the silence cycle, wake
-    # ledger and token fuse. Absent unless [cortex].shell_enabled.
+    # ledger and token fuse. Absent unless shell_id is in marrow's
+    # [cortex].shells (T7, cfg.shell_active()).
     shell_box: dict = {"host": None, "task": None}
 
     async def _post_init(application) -> None:
@@ -253,7 +254,7 @@ def main() -> int:
         # straight after a restart, before any inbound message arrives.
         loop.attach_bot(application.bot)
         listener_box["task"] = application.create_task(loop._idle_listener())
-        if cfg.shell_enabled:
+        if cfg.shell_active():
             from .shell import ShellHost
             host = ShellHost(cfg, loop)
             shell_box["host"] = host

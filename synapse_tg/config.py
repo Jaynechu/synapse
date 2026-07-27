@@ -80,9 +80,10 @@ class TgConfig:
     outbox_note_prefix: str = "\U0001f4ee "
     timezone: str = "Australia/Melbourne"
 
-    # Cortex shell (T9). false = the resident is a plain relay, exactly as
+    # Cortex shell (T9). Active iff shell_id is a member of marrow's
+    # [cortex].shells (T7: single source, see shell_active()) — no local
+    # enable flag. Inactive = the resident is a plain relay, exactly as
     # before: no scheduler task, no silence cycle, no MARROW_CORTEX env.
-    shell_enabled: bool = False
     shell_id: str = "tg"
     # Ledger shared with marrow (<dir>/<shell>.json) + kick socket. Keep the
     # socket path SHORT: macOS caps an AF_UNIX path at 104 bytes.
@@ -121,6 +122,24 @@ class TgConfig:
         config.toml, breaker.json and fuse_events.json — the cross-repo
         protocol files marrow, cortex and this bridge all read."""
         return Path(self.marrow_db).expanduser().parent
+
+    def shell_active(self) -> bool:
+        """Is `shell_id` listed in marrow's [cortex].shells (T7: single
+        source, resolved via marrow_config_dir — same file cortex's
+        shell_enabled() reads)? Missing/unreadable marrow config or missing
+        key -> shell off (standalone-synapse fallback)."""
+        p = self.marrow_config_dir() / "config.toml"
+        try:
+            if p.is_file():
+                data = tomllib.loads(p.read_bytes().decode("utf-8"))
+                shells = (data.get("cortex") or {}).get("shells")
+                if isinstance(shells, list):
+                    return self.shell_id.strip().lower() in [
+                        str(s).strip().lower() for s in shells
+                    ]
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, TypeError) as e:
+            logger.warning("shell_active: marrow config read failed (%s) — shell off", e)
+        return False
 
     def effective_allowed_user_ids(self) -> list[int]:
         """Whitelist actually enforced: allowed_user_ids if set, else
@@ -188,9 +207,10 @@ def load_config(path: Path | None = None) -> TgConfig:
 
     cortex = data.get("cortex") or {}
     if isinstance(cortex, dict):
-        se = cortex.get("shell_enabled")
-        if isinstance(se, bool):
-            cfg.shell_enabled = se
+        if "shell_enabled" in cortex:
+            logger.warning(
+                "[cortex] shell_enabled is ignored — shell activity is now "
+                "driven by marrow's [cortex].shells only")
         for key, attr in (
             ("shell_id", "shell_id"),
             ("shell_state_dir", "shell_state_dir"),

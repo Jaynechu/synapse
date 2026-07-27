@@ -28,9 +28,10 @@ receipt_text_chars = 120
 kick_media_placeholder = "[media]"
 
 # ── Cortex shell (tg) ─────────────────────────────────
-# false = plain relay resident (no scheduler, no silence cycle, no cortex env).
+# Active iff shell_id below is a member of marrow's [cortex].shells (single
+# source — no enable flag here). Absent from that list = plain relay resident
+# (no scheduler, no silence cycle, no cortex env).
 [cortex]
-shell_enabled = false
 # Shell id handed to marrow as MARROW_CORTEX; must appear in marrow's
 # [cortex].shells list for the resident to get the cortex tools.
 shell_id = "tg"
