@@ -60,15 +60,6 @@ LAST_USER_KEY = "last_user_ts"
 # to (cortex reads both to render this shell's "Cortex Today" figure).
 TOKENS_BASE_KEY = "tokens_today_base"
 TOKENS_DATE_KEY = "tokens_date"
-# Replay cursor of this shell: the events row id the last delivered note
-# covered. marrow's hook reads it to skip what the note already showed.
-CURSOR_KEY = "last_note_row_id"
-# The cutoff of a note currently in flight: written before the feed, promoted to
-# CURSOR_KEY once the feed landed (cleared without promotion when it failed).
-PENDING_CURSOR_KEY = "pending_note_row_id"
-# note_render surfaces its rendered cutoff out-of-band on stderr as this line.
-CUTOFF_PREFIX = "cutoff_row_id="
-
 OCCUPANCY_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -337,15 +328,14 @@ class ShellHost:
             logger.exception("shell fire failed for %s — re-arming from ledger", shell)
             self._arm()
 
-    def _render_note(self) -> tuple[str | None, int | None]:
-        """Render this round's note. Returns (note text, render cutoff row id).
-        The cutoff is the events row the note's replay covered, read off the
-        renderer's stderr; None when the render emitted no cutoff line (nothing
-        eligible to replay, or a renderer that does not report one)."""
+    def _render_note(self) -> str | None:
+        """Render this round's note. The renderer owns this shell's replay marker
+        (`note_render --shell <id> --replay`), so a rendered round is consumed at
+        render time — this host stages and promotes nothing."""
         cmd = self._cfg.shell_note_render_cmd
         if not cmd:
             logger.warning("shell note render: [cortex].note_render_cmd unset — round skipped")
-            return None, None
+            return None
         try:
             proc = subprocess.run(
                 list(cmd), capture_output=True, text=True,
@@ -353,12 +343,12 @@ class ShellHost:
             )
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning("shell note render failed: %s", e)
-            return None, None
+            return None
         if proc.returncode != 0:
             logger.warning("shell note render exited %d: %s",
                            proc.returncode, (proc.stderr or "")[:200])
-            return None, None
-        return (proc.stdout or "").strip() or None, _parse_cutoff(proc.stderr)
+            return None
+        return (proc.stdout or "").strip() or None
 
     def _take_rotate(self) -> bool:
         """Claim marrow's rotate flag (read+clear under one lock), so a rotate
@@ -383,54 +373,19 @@ class ShellHost:
         text = str(raw or "").strip()
         return text or None
 
-    def _stage_cutoff(self, cutoff: int) -> None:
-        """Publish an in-flight note's cutoff before feeding it. marrow's hook
-        reads max(CURSOR_KEY, PENDING_CURSOR_KEY), so the fed turn's own hook —
-        which runs while feed_turn is still awaiting the reply — already skips
-        the rows this note is showing."""
-        self._write_state({PENDING_CURSOR_KEY: cutoff})
-
-    def _settle_cutoff(self, *, delivered: bool) -> None:
-        """Claim the pending cutoff (read+clear under one lock, like
-        _take_pending) and, only when the note actually landed, promote it to
-        this shell's cursor — monotonically, so a lower cutoff never rewinds a
-        cursor the hook already pushed further. A failed feed just drops the
-        pending value: those rows stay replayable next round."""
-        try:
-            raw = shell_state.take(self._cfg.shell_state_dir, self._shell,
-                                   PENDING_CURSOR_KEY)
-        except OSError as e:
-            logger.warning("shell pending cutoff read failed: %s", e)
-            return
-        if not delivered:
-            return
-        if not isinstance(raw, int) or isinstance(raw, bool):
-            return
-        try:
-            shell_state.advance(self._cfg.shell_state_dir, self._shell,
-                                CURSOR_KEY, raw)
-        except OSError as e:
-            logger.warning("shell cursor advance failed: %s", e)
-
     async def _feed_note(self, direction: str | None = None) -> None:
         """One fed round: the directed text when a kick left one, else the
-        rendered wakeup note. A rendered note carries a replay cutoff; the
-        directed text carries none, so that round touches no cursor."""
-        cutoff = None
+        rendered wakeup note."""
         if direction:
             note = direction
         else:
-            note, cutoff = await asyncio.to_thread(self._render_note)
+            note = await asyncio.to_thread(self._render_note)
         if not note:
             return  # log already emitted; the cycle re-arms regardless
         logger.info("shell fire: feeding a %s round (%d chars)",
                     "directed" if direction else "note", len(note))
         body = f"{self._cfg.shell_note_tag}\n{note}".strip()
-        if cutoff is not None:
-            self._stage_cutoff(cutoff)
         delivered = await self._feed(body)
-        if cutoff is not None:
-            self._settle_cutoff(delivered=delivered)
         if delivered:
             self._write_state({"last_note_ts": _iso(self._clock())})
             await self.after_turn()  # a fed round burns tokens too
@@ -470,21 +425,6 @@ class ShellHost:
             await self._feed(
                 f"{self._cfg.shell_fuse_tag}\n{self._cfg.shell_fuse_prompt_text}".strip())
         self._loop.shell_respawn()  # folds today's ledger on the way through
-
-
-def _parse_cutoff(stderr: str | None) -> int | None:
-    """The row id from the LAST `cutoff_row_id=N` line on the renderer's stderr.
-    Any other line (warnings, tracebacks) is ignored; no such line -> None."""
-    found = None
-    for line in (stderr or "").splitlines():
-        s = line.strip()
-        if not s.startswith(CUTOFF_PREFIX):
-            continue
-        try:
-            found = int(s[len(CUTOFF_PREFIX):].strip())
-        except ValueError:
-            continue
-    return found
 
 
 def _iso(ts: float) -> str:

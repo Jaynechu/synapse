@@ -6,8 +6,7 @@ Protocol copied (never imported — the two repos stay independent): flock on a
 by the other side survive a merge here, and vice versa.
 
 Keys: session_id / next_wake_at / last_note_ts / last_user_ts / occupancy /
-pending_note / rotate_pending / tokens_today_base / tokens_date /
-last_note_row_id / pending_note_row_id.
+pending_note / rotate_pending / tokens_today_base / tokens_date.
 """
 
 from __future__ import annotations
@@ -91,22 +90,6 @@ def take(state_dir: str | os.PathLike[str], shell: str, key: str):
         if key not in d:
             return None
         value = d.pop(key)
-        _save(p, d)
-        return value
-
-
-def advance(state_dir: str | os.PathLike[str], shell: str, key: str,
-            value: int) -> int:
-    """Monotonic int-cursor write inside ONE critical section: `key` moves to
-    `value` only when it is absent or lower, so a cursor the other side already
-    pushed further is never rewound. Returns the resulting value."""
-    p = state_path(state_dir, shell)
-    with _lock(p):
-        d = _load(p)
-        cur = d.get(key)
-        if isinstance(cur, int) and not isinstance(cur, bool) and cur >= value:
-            return cur
-        d[key] = value
         _save(p, d)
         return value
 

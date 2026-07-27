@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from synapse_core import shell_state
-from synapse_tg import shell
 from synapse_tg.config import TgConfig, load_config
 from synapse_tg.loop import TgLoop
 from synapse_tg.shell import ShellHost, occupancy, parse_wake_at
@@ -140,7 +139,7 @@ def _host(tmp_path, clock, *, feeds=None, **kw):
     loop.shell_respawn = _respawn
     host = ShellHost(cfg, loop, clock=clock)
     loop.attach_shell(host)
-    host._render_note = lambda: ("NOTE BODY", None)
+    host._render_note = lambda: "NOTE BODY"
     return host, loop, fed
 
 
@@ -215,7 +214,7 @@ def test_second_cycle_repeats_after_a_fed_round(tmp_path):
 def test_render_failure_skips_the_round_without_crashing(tmp_path):
     clock = Clock()
     host, _loop, fed = _host(tmp_path, clock)
-    host._render_note = lambda: (None, None)
+    host._render_note = lambda: None
 
     async def run():
         host._arm()
@@ -230,7 +229,7 @@ def test_render_failure_skips_the_round_without_crashing(tmp_path):
 def test_render_cmd_unset_skips_the_round(tmp_path):
     cfg = _cfg(tmp_path, shell_note_render_cmd=[])
     host = ShellHost(cfg, TgLoop(cfg), clock=Clock())
-    assert host._render_note() == (None, None)
+    assert host._render_note() is None
 
 
 # ── wake ledger ───────────────────────────────────────────────────────────────
@@ -1069,7 +1068,7 @@ def _wired(tmp_path, clock, **kw):
     loop.attach_bot(bot)                    # __main__.py:254
     host = ShellHost(cfg, loop, clock=clock)
     loop.attach_shell(host)                 # __main__.py:260
-    host._render_note = lambda: ("NOTE BODY", None)
+    host._render_note = lambda: "NOTE BODY"
     loop._provider = _ScriptedProvider()
     return host, loop, bot
 
@@ -1122,143 +1121,3 @@ def test_live_chat_still_wins_over_the_configured_chat_id(tmp_path):
 
     asyncio.run(run())
     assert {m["chat_id"] for m in bot.sent} == {99}
-
-
-# ── T4: replay cutoff promotion ───────────────────────────────────────────────
-
-CUTOFF = shell.PENDING_CURSOR_KEY
-CURSOR = shell.CURSOR_KEY
-
-
-class _Proc:
-    """subprocess.CompletedProcess stand-in for the note render boundary."""
-
-    def __init__(self, stdout="NOTE BODY", stderr="", returncode=0) -> None:
-        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
-
-
-def _render_cmd(monkeypatch, **kw):
-    monkeypatch.setattr(shell.subprocess, "run", lambda *a, **k: _Proc(**kw))
-
-
-def _round(host, clock):
-    async def run():
-        host._arm()
-        clock.t += 20 * MIN
-        await host._fire("tg")
-
-    asyncio.run(run())
-
-
-def test_cutoff_parse_takes_the_last_match_and_ignores_noise(tmp_path, monkeypatch):
-    host, _loop, _fed = _host(tmp_path, Clock())
-    del host._render_note                      # back to the real one
-    _render_cmd(monkeypatch, stderr="warning: something\ncutoff_row_id=41\n"
-                                    "cutoff_row_id_other=9\ncutoff_row_id=42\n")
-    assert host._render_note() == ("NOTE BODY", 42)
-
-
-def test_no_cutoff_line_means_no_pending_write(tmp_path, monkeypatch):
-    clock = Clock()
-    host, _loop, fed = _host(tmp_path, clock)
-    del host._render_note
-    _render_cmd(monkeypatch, stderr="just a warning\n")
-    assert host._render_note() == ("NOTE BODY", None)
-
-    _round(host, clock)
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert len(fed) == 1
-    assert CUTOFF not in st and CURSOR not in st
-
-
-def test_unparseable_cutoff_value_is_ignored(tmp_path, monkeypatch):
-    host, _loop, _fed = _host(tmp_path, Clock())
-    del host._render_note
-    _render_cmd(monkeypatch, stderr="cutoff_row_id=abc\n")
-    assert host._render_note() == ("NOTE BODY", None)
-
-
-def test_successful_feed_promotes_the_cutoff_and_clears_pending(tmp_path):
-    clock = Clock()
-    host, _loop, fed = _host(tmp_path, clock)
-    host._render_note = lambda: ("NOTE BODY", 77)
-
-    _round(host, clock)
-
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert len(fed) == 1
-    assert st[CURSOR] == 77
-    assert CUTOFF not in st
-
-
-def test_pending_is_visible_while_the_note_is_in_flight(tmp_path):
-    """The fed turn's own hook runs during feed_turn, so it must already see the
-    cutoff as pending — that is what stops it re-replaying the note's rows."""
-    clock = Clock()
-    seen: list[dict] = []
-
-    async def _feed(body):
-        seen.append(shell_state.read(tmp_path / "shells", "tg"))
-        return True
-
-    host, loop, _fed = _host(tmp_path, clock)
-    loop.feed_turn = _feed
-    host._render_note = lambda: ("NOTE BODY", 77)
-
-    _round(host, clock)
-
-    assert seen and seen[0][CUTOFF] == 77 and CURSOR not in seen[0]
-
-
-def test_failed_feed_clears_pending_and_promotes_nothing(tmp_path):
-    clock = Clock()
-    host, loop, _fed = _host(tmp_path, clock)
-
-    async def _feed(body):
-        return False
-
-    loop.feed_turn = _feed
-    host._render_note = lambda: ("NOTE BODY", 77)
-
-    _round(host, clock)
-
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert CUTOFF not in st          # a stale pending would skip undelivered rows
-    assert CURSOR not in st
-    assert st.get("last_note_ts") is None
-
-
-def test_a_lower_cutoff_never_rewinds_the_cursor(tmp_path):
-    clock = Clock()
-    host, _loop, fed = _host(tmp_path, clock)
-    shell_state.write(tmp_path / "shells", "tg", {CURSOR: 500})
-    host._render_note = lambda: ("NOTE BODY", 77)
-
-    _round(host, clock)
-
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert len(fed) == 1
-    assert st[CURSOR] == 500
-    assert CUTOFF not in st
-
-
-def test_directed_kick_round_touches_neither_cursor_key(tmp_path):
-    clock = Clock()
-    host, _loop, fed = _host(tmp_path, clock)
-    host._render_note = lambda: ("NOTE BODY", 77)   # must not be rendered at all
-    shell_state.write(tmp_path / "shells", "tg", {"pending_note": "go look"})
-
-    asyncio.run(host._fire("tg"))
-
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert fed == ["⏳ [NEW ROUND]\ngo look"]
-    assert CUTOFF not in st and CURSOR not in st
-
-
-def test_shell_state_advance_is_monotonic(tmp_path):
-    d = tmp_path / "shells"
-    assert shell_state.advance(d, "tg", CURSOR, 10) == 10
-    assert shell_state.advance(d, "tg", CURSOR, 5) == 10
-    assert shell_state.advance(d, "tg", CURSOR, 11) == 11
-    shell_state.write(d, "tg", {CURSOR: True})       # bool is not a cursor
-    assert shell_state.advance(d, "tg", CURSOR, 3) == 3
