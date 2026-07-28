@@ -1304,8 +1304,8 @@ class TgLoop:
             think_html = f"<blockquote expandable>\U0001f9e0 {gfm_to_tg_html(truncated)}</blockquote>"
             try:
                 await bot.send_message(chat_id=chat_id, text=think_html, parse_mode="HTML")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("thinking send failed: %s", e)
 
         if not response:
             return

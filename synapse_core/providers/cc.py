@@ -204,6 +204,11 @@ class ClaudeCodeProvider(Provider):
             # without it, the final assistant `thinking` block is empty under
             # OAuth (redacted to signature only).
             "--include-partial-messages",
+            # Newer CLIs default thinking display to off for persistent-stdin
+            # (non-EOF) stream-json sessions on Claude 5 models; this restores
+            # the summarized thinking_delta stream. Hidden flag, absent from
+            # --help but accepted (verified 2.1.219, 2026-07-29).
+            "--thinking-display", "summarized",
         ]
         if self.model:
             cmd += ["--model", self.model]
