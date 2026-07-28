@@ -117,7 +117,7 @@ def test_thinking_delta_collected_once_oauth_empty_final(tmp_path, monkeypatch):
     ])
     text, thinking = _stream(loop, bot, provider, monkeypatch)
     assert text == "reply text"
-    assert thinking == "let me think—\nok, decided."
+    assert thinking == "let me think—ok, decided."
 
 
 def test_thinking_not_duplicated_when_final_block_populated(tmp_path, monkeypatch):
@@ -133,7 +133,7 @@ def test_thinking_not_duplicated_when_final_block_populated(tmp_path, monkeypatc
     ])
     text, thinking = _stream(loop, bot, provider, monkeypatch)
     assert text == "reply text"
-    assert thinking == "let me think—\nok, decided."
+    assert thinking == "let me think—ok, decided."
 
 
 def test_no_thinking_deltas_yields_empty_thinking(tmp_path, monkeypatch):

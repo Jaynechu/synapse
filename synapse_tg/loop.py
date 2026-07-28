@@ -547,7 +547,7 @@ class TgLoop:
             # Thread ended with no events at all (clean EOF between turns).
             return None
         self._death_count = 0
-        return "\n\n".join(text_chunks), "\n".join(thinking_chunks), unsolicited
+        return "\n\n".join(text_chunks), "".join(thinking_chunks), unsolicited
 
     async def _stream_response(
         self, bot: Bot, chat_id: int, typing: TypingAction
