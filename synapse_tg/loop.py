@@ -514,14 +514,30 @@ class TgLoop:
                             if not tool_input.get("rotate"):
                                 await self._notify_lie_down(bot, chat_id, tool_input)
                     elif bt == "thinking":
-                        if block.get("thinking"):
-                            thinking_chunks.append(block["thinking"])
+                        # cc fills BOTH the stream_event thinking_delta path
+                        # and this final-frame thinking block with the same
+                        # plaintext under --include-partial-messages. Reading
+                        # both would duplicate the 🧠 bubble; stream_event is
+                        # the source of truth — skip here.
+                        pass
                 usage = msg.get("usage")
                 if isinstance(usage, dict):
                     self._merge_usage(usage)
                     snap = {k: v for k, v in usage.items() if isinstance(v, int)}
                     if snap:
                         self._state.last_assistant_usage = snap
+            elif t_type == "stream_event":
+                # cc --include-partial-messages forwards SSE deltas as
+                # `stream_event` frames. Under OAuth the final assistant
+                # `thinking` block is empty (signature-only); the plaintext
+                # only lives in these in-flight `thinking_delta` chunks.
+                e = ev.get("event") or {}
+                if e.get("type") == "content_block_delta":
+                    d = e.get("delta") or {}
+                    if d.get("type") == "thinking_delta":
+                        txt = d.get("thinking")
+                        if isinstance(txt, str) and txt:
+                            thinking_chunks.append(txt)
             elif t_type == "result":
                 usage = ev.get("usage")
                 if isinstance(usage, dict):
