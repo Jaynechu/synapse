@@ -14,6 +14,14 @@ from synapse_wx.media import outbound as media_outbound
 
 
 @pytest.fixture(autouse=True)
+def outbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Prevent outbound fallback writes from leaking into the real iCloud outbox."""
+    box = tmp_path / "outbox"
+    monkeypatch.setattr(media_outbound, "_ICLOUD_OUTBOX", box)
+    return box
+
+
+@pytest.fixture(autouse=True)
 def reset_counters():
     """Reset module-level counters and sink between tests."""
     media_inbound._inbound_fail_counts.clear()
