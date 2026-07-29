@@ -740,6 +740,97 @@ def test_occupancy_over_fuse_feeds_prompt_then_respawns(tmp_path):
     assert st["occupancy"] == 0 and "session_id" not in st
 
 
+# ── visible context broadcast (🗃️ Context <N>k) ───────────────────────────────
+
+def _notify_host(tmp_path, **kw):
+    """ShellHost whose _notify lands on a FakeBot (no telegram anywhere)."""
+    base = dict(chat_id=4242, shell_fuse_tokens=0,
+                shell_context_notify_start=150_000,
+                shell_context_notify_step=50_000)
+    base.update(kw)
+    host, loop, fed = _host(tmp_path, Clock(), **base)
+    bot = FakeBot()
+    loop.attach_bot(bot)
+    return host, loop, bot
+
+
+def _turn(host, loop, occ: int) -> None:
+    loop._state.last_assistant_usage = {"input_tokens": occ}
+    asyncio.run(host.after_turn())
+
+
+def test_context_broadcast_stays_quiet_below_the_start_tier(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    _turn(host, loop, 149_999)
+    assert bot.sent == []
+    assert not shell_state.read(tmp_path / "shells", "tg").get("context_tier")
+
+
+def test_context_broadcast_fires_once_on_crossing_the_start_tier(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    _turn(host, loop, 152_400)
+    assert [m["text"] for m in bot.sent] == ["\U0001f5c3️ Context 152k"]
+    assert {m["chat_id"] for m in bot.sent} == {4242}
+    assert shell_state.read(tmp_path / "shells", "tg")["context_tier"] == 150_000
+
+
+def test_further_turns_in_the_same_tier_do_not_repeat(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    for occ in (151_000, 160_000, 199_999):
+        _turn(host, loop, occ)
+    assert len(bot.sent) == 1
+    assert bot.sent[0]["text"] == "\U0001f5c3️ Context 151k"
+
+
+def test_each_new_tier_broadcasts_again(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    for occ in (151_000, 201_000, 249_000, 252_000):
+        _turn(host, loop, occ)
+    assert [m["text"] for m in bot.sent] == [
+        "\U0001f5c3️ Context 151k",
+        "\U0001f5c3️ Context 201k",
+        "\U0001f5c3️ Context 252k",
+    ]
+    assert shell_state.read(tmp_path / "shells", "tg")["context_tier"] == 250_000
+
+
+def test_a_jump_past_several_tiers_sends_one_message(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    _turn(host, loop, 320_000)
+    assert [m["text"] for m in bot.sent] == ["\U0001f5c3️ Context 320k"]
+    assert shell_state.read(tmp_path / "shells", "tg")["context_tier"] == 300_000
+
+
+def test_fold_clears_the_watermark_so_a_fresh_window_announces_again(tmp_path):
+    host, loop, bot = _notify_host(tmp_path)
+    _turn(host, loop, 151_000)
+    host.fold_session()
+    assert shell_state.read(tmp_path / "shells", "tg")["context_tier"] == 0
+    _turn(host, loop, 151_000)
+    assert len(bot.sent) == 2
+
+
+def test_context_broadcast_off_switches(tmp_path):
+    for kw in ({"shell_context_notify": False},
+               {"shell_context_notify_start": 0},
+               {"shell_context_notify_step": 0}):
+        d = tmp_path / f"off{len(kw)}{list(kw)[0]}"
+        d.mkdir()
+        host, loop, bot = _notify_host(d, **kw)
+        _turn(host, loop, 400_000)
+        assert bot.sent == [], kw
+
+
+def test_context_notify_keys_load_from_the_cortex_section(tmp_path):
+    p = tmp_path / "c.toml"
+    p.write_text('[cortex]\ncontext_notify = false\n'
+                 'context_notify_start = 120000\ncontext_notify_step = 20000\n')
+    cfg = load_config(p)
+    assert cfg.shell_context_notify is False
+    assert cfg.shell_context_notify_start == 120_000
+    assert cfg.shell_context_notify_step == 20_000
+
+
 # ── today's token ledger (tokens_today_base / tokens_date) ────────────────────
 
 def test_respawn_folds_the_closing_occupancy_into_todays_base(tmp_path):

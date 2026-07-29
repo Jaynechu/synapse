@@ -113,6 +113,13 @@ class TgConfig:
         "Session context fused. Update handoff before rotate. Add todo if any. "
         "lie_down(rotate=True)"
     )
+    # Visible context broadcast: once occupancy reaches context_notify_start,
+    # then again every context_notify_step above it, the chat gets one plain
+    # "🗃️ Context <N>k" line. One message per tier per window (watermark in the
+    # ledger, cleared on fold). Disable with context_notify = false.
+    shell_context_notify: bool = True
+    shell_context_notify_start: int = 150000
+    shell_context_notify_step: int = 50000
 
     # CWD presets
     cwd_presets: dict = field(default_factory=dict)
@@ -243,6 +250,14 @@ def load_config(path: Path | None = None) -> TgConfig:
         ft = cortex.get("fuse_tokens")
         if isinstance(ft, int) and not isinstance(ft, bool) and ft >= 0:
             cfg.shell_fuse_tokens = ft
+        cn = cortex.get("context_notify")
+        if isinstance(cn, bool):
+            cfg.shell_context_notify = cn
+        for key, attr in (("context_notify_start", "shell_context_notify_start"),
+                          ("context_notify_step", "shell_context_notify_step")):
+            v = cortex.get(key)
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                setattr(cfg, attr, v)
 
     core = data.get("core") or {}
     if isinstance(core, dict) and isinstance(core.get("timezone"), str):

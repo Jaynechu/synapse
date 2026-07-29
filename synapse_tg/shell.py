@@ -61,6 +61,9 @@ LAST_USER_KEY = "last_user_ts"
 # to (cortex reads both to render this shell's "Cortex Today" figure).
 TOKENS_BASE_KEY = "tokens_today_base"
 TOKENS_DATE_KEY = "tokens_date"
+# Highest context-broadcast tier already announced in this window; cleared on
+# fold so a fresh window starts announcing again.
+CONTEXT_TIER_KEY = "context_tier"
 OCCUPANCY_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -200,7 +203,7 @@ class ShellHost:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:  # noqa: BLE001
-            logger.warning("breaker notice send failed: %s", e)
+            logger.warning("shell notice send failed: %s", e)
 
     # --- today ledger ----------------------------------------------------
 
@@ -233,6 +236,7 @@ class ShellHost:
         occ = occ if isinstance(occ, int) and not isinstance(occ, bool) else 0
         base = self._today_base(state, today) + max(occ, 0)
         self._write_state({"session_id": None, "occupancy": 0,
+                           CONTEXT_TIER_KEY: 0,
                            TOKENS_BASE_KEY: base, TOKENS_DATE_KEY: today})
 
     # --- timing ---------------------------------------------------------
@@ -440,16 +444,37 @@ class ShellHost:
 
     # --- token ledger + fuse --------------------------------------------
 
+    def _context_tier(self, occ: int, state: dict) -> int | None:
+        """Tier `occ` has newly reached (start + k*step), or None when the
+        broadcast is off, occ is below start, or that tier already fired."""
+        cfg = self._cfg
+        start, step = cfg.shell_context_notify_start, cfg.shell_context_notify_step
+        if not cfg.shell_context_notify or start <= 0 or step <= 0 or occ < start:
+            return None
+        tier = start + ((occ - start) // step) * step
+        try:
+            last = int(state.get(CONTEXT_TIER_KEY) or 0)
+        except (TypeError, ValueError):
+            last = 0
+        return tier if tier > last else None
+
     async def after_turn(self) -> None:
         """Called by the loop once a resident turn has been delivered."""
         occ = occupancy(self._loop._state.last_assistant_usage)
         today = self._local_date()
-        self._write_state({
+        state = self._read_state()
+        tier = self._context_tier(occ, state)
+        patch = {
             "session_id": self._loop._state.session_id,
             "occupancy": occ,
-            TOKENS_BASE_KEY: self._today_base(self._read_state(), today),
+            TOKENS_BASE_KEY: self._today_base(state, today),
             TOKENS_DATE_KEY: today,
-        })
+        }
+        if tier is not None:
+            patch[CONTEXT_TIER_KEY] = tier
+        self._write_state(patch)
+        if tier is not None:
+            await self._notify(f"🗃️ Context {round(occ / 1000)}k")
         fuse = self._cfg.shell_fuse_tokens
         if self._feeding or fuse <= 0 or occ < fuse:
             return

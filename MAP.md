@@ -98,6 +98,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - HealthGate: dirty boot detection → alert.
 - Provider death gate: session_id set = fake (swap killed), empty = real → critical.
 - [tg] Shell note render: `note_render_alert_after` (3) consecutive failures → one `warn` / `shell_note_render_failed` alert; exit-0 resets the streak.
+- [tg] Context broadcast: `ShellHost.after_turn` sends a plain `🗃️ Context <N>k` (N = occupancy rounded to k) via `_notify` when occupancy reaches a new tier — `[cortex].context_notify_start` (150k) then every `context_notify_step` (50k). Tier watermark `context_tier` lives in the shell ledger (one message per tier per window), zeroed by `fold_session` on rotate/respawn. `context_notify = false` disables. Independent of marrow's turn_inject nudge.
 - [tg] Retry: python-telegram-bot built-in + custom backoff.
 - [wx] iLink retry: @with_retry exp backoff cap 5. SleepWakeObserver. cc stderr drain (deadlock prevention).
 - Launchd KeepAlive + 30s throttle (both channels).

@@ -36,7 +36,8 @@ kick_media_placeholder = "[media]"
 # [cortex].shells list for the resident to get the cortex tools.
 shell_id = "tg"
 # Ledger shared with marrow: <dir>/<shell>.json (session_id / next_wake_at /
-# last_note_ts / occupancy / pending_note / rotate_pending / tokens_today_base +
+# last_note_ts / occupancy / context_tier / pending_note / rotate_pending /
+# tokens_today_base +
 # tokens_date = today's finished-session tokens, dated in [core].timezone).
 # Keep the socket path SHORT — macOS caps an
 # AF_UNIX path at 104 bytes. marrow's [cortex].shell_socket must match.
@@ -66,6 +67,12 @@ shell_note_tag = "⏳ [NEW ROUND]"
 fuse_tokens = 180000
 fuse_tag = "⚙️ [FUSE]"
 # fuse_prompt_text = "..."
+# Visible context broadcast: one plain "🗃️ Context <N>k" line to the chat when
+# occupancy reaches context_notify_start, then every context_notify_step above
+# it (once per tier per window). false = never announce.
+context_notify = true
+context_notify_start = 150000
+context_notify_step = 50000
 
 # ── WeChat ────────────────────────────────────────────
 [user]
