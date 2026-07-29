@@ -72,7 +72,7 @@ def test_large_file_copied_and_text_sent(tmp_path: Path, outbox: Path) -> None:
     assert len(client.sent_texts) == 1
     to, ctx, msg = client.sent_texts[0]
     assert (to, ctx) == ("wx_1", "ctx")
-    assert msg == t("media.icloud_outbox", name="big.pdf", channel_label="CC-WX")
+    assert msg == t("media.icloud_outbox", name="big.pdf", folder="outbox")
 
 
 def test_collision_suffix(tmp_path: Path, outbox: Path) -> None:

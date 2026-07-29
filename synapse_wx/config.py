@@ -94,6 +94,9 @@ class Config:
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
+    # iCloud outbox for outbound files exceeding the CDN ceiling (C1 fallback).
+    icloud_outbox: str = "~/Documents/CC-Drop"
+
     # /cwd presets from [cwd_presets] — digit -> absolute path
     cwd_presets: dict | None = None
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
@@ -173,6 +176,10 @@ def load_config(path: Path | None = None) -> Config:
     core = data.get("core") or {}
     if isinstance(core, dict) and isinstance(core.get("timezone"), str):
         cfg.timezone = core["timezone"]
+    media = data.get("media") or {}
+    if isinstance(media, dict) and isinstance(media.get("icloud_outbox"), str):
+        if media["icloud_outbox"].strip():
+            cfg.icloud_outbox = media["icloud_outbox"]
     provider = data.get("provider") or {}
     if isinstance(provider, dict) and "cc_cwd" in provider:
         val = provider["cc_cwd"]

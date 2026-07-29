@@ -306,8 +306,8 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "en": "Restarted.",
     },
     "media.icloud_outbox": {
-        "cn": "📦 已发货，请在{channel_label}签收 {name}",
-        "en": "📦 Shipped to {channel_label}: {name}",
+        "cn": "📦 已发货，请在{folder}签收 {name}",
+        "en": "📦 Shipped to {folder}: {name}",
     },
 
     # ── cortex shell: lie_down / rotate notices ────────────────

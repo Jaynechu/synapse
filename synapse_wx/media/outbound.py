@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from synapse_core.commands.messages import t
+from synapse_wx.config import load_config
 from synapse_wx.ilink._media import _CDN_MAX_CIPHERTEXT
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,9 @@ def _record_outbound_failure(kind: str, detail: str) -> None:
 def _record_outbound_success(kind: str) -> None:
     _outbound_fail_counts.pop(kind, None)
 
-# iCloud outbox for files that exceed the CDN ceiling.
-_ICLOUD_OUTBOX = Path.home() / "Documents" / "CC-WX"
+# iCloud outbox for files that exceed the CDN ceiling. config.toml [media]
+# icloud_outbox overrides; default matches synapse_wx.config.Config.
+_ICLOUD_OUTBOX = Path(load_config().icloud_outbox).expanduser()
 
 _KIND_TO_METHOD = {
     "image": "send_image",
@@ -145,7 +147,7 @@ def send_media(
                 "media.icloud_outbox",
                 style,
                 name=dest.name,
-                channel_label=channel_label,
+                folder=dest.parent.name,
             )
             recipient = to_user_id or getattr(client, "_last_from_wxid", None) or ""
             ctx = context_token if context_token is not None else (
@@ -180,7 +182,7 @@ def send_media(
                     "media.icloud_outbox",
                     style,
                     name=dest.name,
-                    channel_label=channel_label,
+                    folder=dest.parent.name,
                 )
                 recipient = to_user_id or getattr(client, "_last_from_wxid", None) or ""
                 ctx = context_token if context_token is not None else (
