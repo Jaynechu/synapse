@@ -39,8 +39,8 @@
 
 - Stops cortex autonomous activity (fed rounds / auto wake). Bridge and normal chat unaffected.
 - Persistent across restarts. State: `~/.config/marrow/breaker.json` (MAP.md §9.1).
-- On: `/ct-pause` in cc cli (`cortex.ctl pause [--shell cli|tg]`).
-- Off: `/ct-wake` (clear + wake) or `cortex.ctl resume` (clear only). Show: `cortex.ctl status`.
+- On: `/ct-pause` in cc cli (`cortex.ctl pause [--shell cli|tg]`, scopes merge).
+- Off: `/ct-wake [tg|cli|all]` (clear + kick that shell now) or `cortex.ctl resume [--shell]` (clear only). Show: `cortex.ctl status`.
 - Auto-trips after `[cortex.breaker].fuse_threshold` fuses within `window_hours` (marrow config.toml).
 
 ## Hold words
