@@ -57,6 +57,10 @@ ROTATE_KEY = "rotate_pending"
 # Idle basis: start of the current silence window, persisted so a restart
 # continues that window instead of opening a fresh one that fires at once.
 LAST_USER_KEY = "last_user_ts"
+# Real user presence: written only by an inbound user message. Distinct from the
+# idle basis, which every machine round also resets — marrow's presence gate
+# reads this key alone.
+REAL_USER_KEY = "last_real_user_ts"
 # Today's token ledger: finished sessions' finals + the local date they belong
 # to (cortex reads both to render this shell's "Cortex Today" figure).
 TOKENS_BASE_KEY = "tokens_today_base"
@@ -281,9 +285,11 @@ class ShellHost:
         logger.info("shell armed: next round at %s", _iso(at))
 
     def on_user_message(self) -> None:
-        """Any inbound tg message cancels a booked wake and restarts the
-        silence cycle from now."""
-        self._set_idle_basis(self._clock(), {"next_wake_at": None})
+        """Any inbound tg message cancels a booked wake, restarts the silence
+        cycle from now and stamps REAL_USER_KEY — the only path that does."""
+        now = self._clock()
+        self._set_idle_basis(now, {"next_wake_at": None,
+                                   REAL_USER_KEY: _iso(now)})
         self._arm()
 
     # --- fire -----------------------------------------------------------

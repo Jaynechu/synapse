@@ -42,7 +42,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - commands/messages.py — t(key, style) cn/en ack pairs. Only path for user-facing acks.
 - commands/aliases.py — MODEL_ALIASES (5/fable/opus/sonnet/haiku).
 - commands/marrow_audit.py — mm-/mm+ direct sqlite to marrow.db.
-- shell_state.py — per-shell cortex ledger `<state_dir>/<shell>.json` (flock + atomic replace). Protocol shared with marrow/cortex, code never imported across repos.
+- shell_state.py — per-shell cortex ledger `<state_dir>/<shell>.json` (flock + atomic replace). Protocol shared with marrow/cortex, code never imported across repos. `last_user_ts` = idle basis (machine rounds reset it); `last_real_user_ts` = inbound-message-only presence stamp marrow's nudge gate reads.
 - breaker.py — circuit breaker, bridge side (§9.1).
 - sessionend/tracker.py — SessionTracker: sessions.json, RLock + atomic write.
 - sessionend/idle.py — IdleFireLoop: 30min scan, cross-channel cleanup, mid_scan subprocess spawn, .mid_fired markers.
