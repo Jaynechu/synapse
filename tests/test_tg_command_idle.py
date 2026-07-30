@@ -1,52 +1,63 @@
-"""Inbound slash commands must not reset the tg shell's idle timer, while
-every other _track side effect (bot/chat tracking, watch-reply kick) still
-runs. Only the shell's on_user_message() call is gated."""
+"""Only a message the registry forwards to the LLM counts as user activity on
+tg: anything dispatch swallows (known command, typo slash, bare alias, picker
+digit) must leave the shell's silence window and any booked wake untouched,
+while the rest of _track (bot/chat tracking, watch-reply kick) still runs.
+
+Every boundary is mocked: no cc spawn, no telegram bot, no real clock.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from synapse_core.commands.registry import CommandContext, Registry
-from synapse_core.state import BridgeState
+from synapse_core import shell_state
 from synapse_tg.config import TgConfig
 from synapse_tg.loop import TgLoop
+from synapse_tg.shell import ShellHost, parse_wake_at
+
+MIN = 60.0
 
 
-# ── Registry.is_command ─────────────────────────────────────────
+class _NoSpawnProvider:
+    """Stands in for ClaudeCodeProvider at the spawn boundary: an alias swap
+    ("opus") runs the real _swap_provider path without starting a cc process."""
+
+    session_id = None
+    turn_output_capped = False
+
+    def __init__(self, **kwargs) -> None:
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def is_alive(self) -> bool:
+        return True
+
+    def spawn(self) -> None:
+        pass
+
+    def cancel(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 
-def _noop(*_a, **_k) -> None:
-    return None
+@pytest.fixture(autouse=True)
+def stub_provider(monkeypatch):
+    monkeypatch.setattr("synapse_tg.loop.ClaudeCodeProvider", _NoSpawnProvider)
 
 
-def _registry() -> Registry:
-    return Registry(CommandContext(
-        state=BridgeState(),
-        swap_provider=_noop,
-        close_provider=_noop,
-        forget_session=_noop,
-    ))
-
-
-@pytest.mark.parametrize("text", ["/info", "/Info", "/model sonnet", "/clear",
-                                   "/resume 1", "/help"])
-def test_is_command_true_for_known_slash_commands(text: str) -> None:
-    assert _registry().is_command(text) is True
-
-
-@pytest.mark.parametrize("text", ["/xyz", "/", "hello", "", "info", "/foo bar"])
-def test_is_command_false_for_unknown_or_non_slash_text(text: str) -> None:
-    assert _registry().is_command(text) is False
-
-
-def test_is_command_none_is_false() -> None:
-    assert _registry().is_command(None) is False  # type: ignore[arg-type]
-
-
-# ── TgLoop.on_message idle gating ────────────────────────────────
+@pytest.fixture(autouse=True)
+def stub_kick(monkeypatch):
+    """The watch-reply kick shells out; tests that assert on it re-patch."""
+    monkeypatch.setattr(
+        TgLoop, "_inbound_from_her",
+        lambda self, text="", msg_date=None, media_type="": None,
+    )
 
 
 class _ShellSpy:
@@ -55,6 +66,9 @@ class _ShellSpy:
 
     def on_user_message(self) -> None:
         self.calls += 1
+
+    def fold_session(self, _sid: str | None = None) -> None:
+        pass
 
 
 class _FakeMessage:
@@ -96,58 +110,55 @@ def _build_loop(tmp_path: Path, chat_id: int = 111) -> tuple[TgLoop, _ShellSpy]:
     return loop, shell
 
 
-async def test_registered_slash_command_does_not_reset_idle(tmp_path: Path, monkeypatch) -> None:
+# ── on_message: which inputs count as activity ───────────────────
+
+
+@pytest.mark.parametrize("text", [
+    "/info",                # known command
+    "/model",               # known command, no argument
+    "/xyz",                 # typo slash -> unknown.cmd ack
+    "/opus 5o",             # typo of a model switch
+    "/ct-wake",             # skill name, never a bridge command
+    "opus",                 # bare natural alias
+])
+async def test_dispatch_handled_text_does_not_count_as_activity(
+    tmp_path: Path, text: str
+) -> None:
     loop, shell = _build_loop(tmp_path)
-    kick_calls: list[str] = []
-    monkeypatch.setattr(
-        TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": kick_calls.append(text),
-    )
-    update = _FakeUpdate(_FakeMessage("/info"))
+    update = _FakeUpdate(_FakeMessage(text))
     await loop.on_message(update, _FakeCtx(_FakeBot()))
 
     assert shell.calls == 0
-    # Rest of _track still ran: bot/chat tracked, watch-reply kick invoked.
+    assert update.message.replies          # something was acked back
+    # Rest of _track still ran: the outbound chat is tracked either way.
     assert loop._pending_chat_id == 111
-    assert kick_calls == ["/info"]
-    # Command was actually dispatched (ack sent back).
-    assert update.message.replies
 
 
-async def test_plain_text_resets_idle(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("text", ["hello there", "info", "model opus"])
+async def test_forwarded_text_counts_as_activity(tmp_path: Path, text: str) -> None:
     loop, shell = _build_loop(tmp_path)
-    monkeypatch.setattr(
-        TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": None,
-    )
-    update = _FakeUpdate(_FakeMessage("hello there"))
+    update = _FakeUpdate(_FakeMessage(text))
     await loop.on_message(update, _FakeCtx(_FakeBot()))
 
     assert shell.calls == 1
 
 
-async def test_unregistered_slash_text_resets_idle(tmp_path: Path, monkeypatch) -> None:
-    """A leading-'/' that is NOT a known command is still "handled" by
-    dispatch (unknown.cmd ack) — treat it like any other consumed message."""
+async def test_watch_reply_kick_still_fires_for_a_command(tmp_path: Path, monkeypatch) -> None:
     loop, shell = _build_loop(tmp_path)
+    kicks: list[str] = []
     monkeypatch.setattr(
         TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": None,
+        lambda self, text="", msg_date=None, media_type="": kicks.append(text),
     )
-    update = _FakeUpdate(_FakeMessage("/xyz"))
-    await loop.on_message(update, _FakeCtx(_FakeBot()))
+    await loop.on_message(_FakeUpdate(_FakeMessage("/info")), _FakeCtx(_FakeBot()))
 
-    assert shell.calls == 1
-    assert update.message.replies  # unknown.cmd ack still sent
+    assert shell.calls == 0
+    assert kicks == ["/info"]
 
 
 async def test_photo_handler_still_resets_idle(tmp_path: Path, monkeypatch) -> None:
-    """Media handlers are untouched by the gating — always count as activity."""
+    """Media handlers never go through dispatch — always count as activity."""
     loop, shell = _build_loop(tmp_path)
-    monkeypatch.setattr(
-        TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": None,
-    )
 
     class _FakeMsg(_FakeMessage):
         def __init__(self) -> None:
@@ -155,12 +166,68 @@ async def test_photo_handler_still_resets_idle(tmp_path: Path, monkeypatch) -> N
             self.photo = [object()]
             self.caption = None
 
-    update = _FakeUpdate(_FakeMsg())
-
     async def _no_photo(bot, message, data_dir):
         return []
 
     monkeypatch.setattr("synapse_tg.loop.materialize_photo", _no_photo)
-    await loop.on_photo(update, _FakeCtx(_FakeBot()))
+    await loop.on_photo(_FakeUpdate(_FakeMsg()), _FakeCtx(_FakeBot()))
 
     assert shell.calls == 1
+
+
+# ── end to end: the booked wake in the shell ledger ──────────────
+
+
+class _Clock:
+    def __init__(self, t: float = 1_000_000.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _iso_utc(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+def _booked_loop(tmp_path: Path) -> tuple[TgLoop, _Clock]:
+    """A real ShellHost over a real TgLoop, asleep until +3h."""
+    clock = _Clock()
+    cfg = TgConfig(
+        data_dir=tmp_path / "tg-data",
+        chat_id=111,
+        marrow_db=str(tmp_path / "marrow.db"),
+        shell_state_dir=str(tmp_path / "shells"),
+        shell_socket=str(tmp_path / "s.sock"),
+        shell_idle_min=20.0,
+    )
+    loop = TgLoop(cfg)
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"next_wake_at": _iso_utc(clock.t + 180 * MIN)})
+    host = ShellHost(cfg, loop, clock=clock)
+    loop.attach_shell(host)
+    return loop, clock
+
+
+def _wake(tmp_path: Path) -> float | None:
+    return parse_wake_at(shell_state.read(tmp_path / "shells", "tg").get("next_wake_at"))
+
+
+@pytest.mark.parametrize("text", ["/opus 5o", "/model", "opus", "/ct-wake"])
+def test_handled_text_keeps_the_booked_wake(tmp_path: Path, text: str) -> None:
+    loop, clock = _booked_loop(tmp_path)
+    booked = _wake(tmp_path)
+
+    asyncio.run(loop.on_message(_FakeUpdate(_FakeMessage(text)), _FakeCtx(_FakeBot())))
+
+    assert _wake(tmp_path) == booked
+
+
+def test_plain_text_cancels_the_booked_wake(tmp_path: Path) -> None:
+    loop, clock = _booked_loop(tmp_path)
+
+    asyncio.run(loop.on_message(_FakeUpdate(_FakeMessage("还没睡")), _FakeCtx(_FakeBot())))
+
+    assert _wake(tmp_path) is None
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert parse_wake_at(st.get("last_user_ts")) == pytest.approx(clock.t, abs=1)
