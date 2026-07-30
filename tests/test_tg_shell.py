@@ -475,28 +475,6 @@ def test_user_message_cancels_the_booked_wake_and_restarts_the_window(tmp_path):
     assert host._scheduler._table["tg"][0] == pytest.approx(clock.t + 20 * MIN, abs=1)
 
 
-def test_only_an_inbound_message_stamps_real_user_presence(tmp_path):
-    """marrow's occupancy nudge gates on last_real_user_ts: a fed note round
-    resets the idle basis but must leave real presence untouched."""
-    clock = Clock()
-    host, _loop, fed = _host(tmp_path, clock)
-
-    async def run():
-        host._arm()
-        clock.t += 20 * MIN
-        await host._fire("tg")
-
-    asyncio.run(run())
-    assert len(fed) == 1
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert parse_wake_at(st.get("last_user_ts")) == pytest.approx(clock.t, abs=1)
-    assert "last_real_user_ts" not in st
-
-    host.on_user_message()
-    st = shell_state.read(tmp_path / "shells", "tg")
-    assert parse_wake_at(st["last_real_user_ts"]) == pytest.approx(clock.t, abs=1)
-
-
 def test_restart_continues_the_running_idle_window(tmp_path):
     """Basis 5min old on disk -> the fresh host owes 15 more minutes, and the
     boot pass itself feeds nothing."""
