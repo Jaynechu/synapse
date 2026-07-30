@@ -49,7 +49,6 @@ DEFAULTS = {
         "Circuit breaker tripped: fuse #{count} within {hours}h. Cortex "
         "autonomous activity paused ({scope}). Clear with ct-wake."
     ),
-    "clear_message": "Circuit breaker cleared — cortex autonomous activity resumed.",
 }
 
 
