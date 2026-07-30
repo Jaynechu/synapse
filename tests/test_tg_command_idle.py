@@ -213,7 +213,7 @@ def _wake(tmp_path: Path) -> float | None:
     return parse_wake_at(shell_state.read(tmp_path / "shells", "tg").get("next_wake_at"))
 
 
-@pytest.mark.parametrize("text", ["/opus 5o", "/model", "opus", "/ct-wake"])
+@pytest.mark.parametrize("text", ["/info", "/opus 5o", "/model", "opus", "/ct-wake"])
 def test_handled_text_keeps_the_booked_wake(tmp_path: Path, text: str) -> None:
     loop, clock = _booked_loop(tmp_path)
     booked = _wake(tmp_path)
@@ -229,5 +229,26 @@ def test_plain_text_cancels_the_booked_wake(tmp_path: Path) -> None:
     asyncio.run(loop.on_message(_FakeUpdate(_FakeMessage("还没睡")), _FakeCtx(_FakeBot())))
 
     assert _wake(tmp_path) is None
+    st = shell_state.read(tmp_path / "shells", "tg")
+    assert parse_wake_at(st.get("last_user_ts")) == pytest.approx(clock.t, abs=1)
+
+
+def test_diary_inject_cancels_the_booked_wake(tmp_path: Path, monkeypatch) -> None:
+    fetch_calls: list[str] = []
+
+    def _fetch_diary(raw_date: str) -> tuple[str, str]:
+        fetch_calls.append(raw_date)
+        return ("Today was lovely.", "2026-07-29")
+
+    monkeypatch.setattr(TgLoop, "_make_fetch_diary", lambda _self: _fetch_diary)
+    loop, clock = _booked_loop(tmp_path)
+
+    asyncio.run(loop.on_message(
+        _FakeUpdate(_FakeMessage("/diary yesterday")), _FakeCtx(_FakeBot())
+    ))
+
+    assert _wake(tmp_path) is None
+    assert fetch_calls == ["yesterday"]
+    assert loop._buffer.flush().startswith("[DIARY — 2026-07-29]\nToday was lovely.\n")
     st = shell_state.read(tmp_path / "shells", "tg")
     assert parse_wake_at(st.get("last_user_ts")) == pytest.approx(clock.t, abs=1)

@@ -951,9 +951,9 @@ class TgLoop:
         self._pending_chat_id = chat_id
         # An inbound message restarts the cortex shell's silence cycle and
         # cancels a booked wake only when it actually reaches the LLM. Text
-        # turns pass count_activity=(dispatch result == "forward"), so anything
-        # the registry consumes — command, typo, alias, picker digit — leaves a
-        # scheduled wake standing. Media turns always count.
+        # turns count a "forward" verdict or an injected rewrite; anything the
+        # registry consumes without injecting leaves a scheduled wake standing.
+        # Media turns always count.
         if count_activity and self._shell is not None:
             self._shell.on_user_message()
         # P6: inbound from the authorized recipient drives watch-reply kicks.
@@ -1015,15 +1015,15 @@ class TgLoop:
         text = update.message.text.strip()
         if not text:
             return
-        # Dispatch before _track: only its real verdict tells a message that
-        # feeds the LLM ("forward") apart from one the registry swallows, and
-        # nothing inside dispatch reads the bot/chat_id _track binds. Both are
+        # Dispatch before _track: its verdict plus any pending rewrite tells a
+        # message that feeds the LLM apart from one the registry only consumes.
+        # Nothing inside dispatch reads the bot/chat_id _track binds. Both are
         # synchronous, so no other task can observe the gap.
         action, ack = self._registry.dispatch(text)
         inject = self._registry.pending_rewrite
         self._track(context.bot, update.message.chat_id, text=text,
                      msg_date=update.message.date,
-                     count_activity=action == "forward")
+                     count_activity=(action == "forward" or bool(inject)))
 
         if action == "handled":
             if self._queued_extra_bubbles:

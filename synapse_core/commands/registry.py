@@ -253,8 +253,8 @@ class Registry:
     def dispatch(self, raw: str) -> DispatchResult:
         """Route one inbound message. "handled" = consumed here (ack already
         chosen, state already mutated); "forward" = feed it to the LLM. Bridges
-        also gate user-activity side effects (tg's idle-timer reset / booked
-        wake) on a "forward" verdict."""
+        may also gate user-activity side effects on the verdict and any pending
+        rewrite produced by the dispatch."""
         self._pending_rewrite = None
         if raw is None:
             return ("forward", None)
