@@ -1059,6 +1059,98 @@ def test_rotate_without_a_booked_wake_opens_a_fresh_idle_window(tmp_path):
     assert fed[1].startswith("⏳ [NEW ROUND]")
 
 
+# ── duty wake-source line: delivered on its own round, or not at all ──────────
+
+SOURCE_LINE = "\U0001f504 transferred from cli | tg on, cli hold"
+
+
+def _mirror_render(host, tmp_path):
+    """Stand in for `note_render --mirror --shell tg` at the subprocess
+    boundary: the delivering render claims the staged source line and leads the
+    note with it."""
+    d = tmp_path / "shells"
+
+    def _render():
+        src = shell_state.take(d, "tg", "wake_source")
+        return f"{src}\nNOTE BODY" if src else "NOTE BODY"
+
+    host._render_note = _render
+
+
+def _staged(tmp_path):
+    return shell_state.read(tmp_path / "shells", "tg").get("wake_source")
+
+
+def test_duty_wake_with_rotation_delivers_the_source_to_the_fresh_session(tmp_path):
+    """Duty stages the line and books a due-now wake with rotate_pending: the
+    respawn keeps the line, and the round it re-arms feeds it into the fresh
+    session — the transfer round itself."""
+    from datetime import datetime, timezone
+
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    _mirror_render(host, tmp_path)
+    now_iso = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"rotate_pending": True, "next_wake_at": now_iso,
+                       "wake_source": SOURCE_LINE})
+
+    async def run():
+        await host._fire("tg")               # rotate: respawn, no feed
+        assert _staged(tmp_path) == SOURCE_LINE
+        await host._fire("tg")               # the re-armed due-now wake
+
+    asyncio.run(run())
+    assert fed[0] == "__RESPAWN__"
+    assert SOURCE_LINE in fed[1] and "NOTE BODY" in fed[1]
+    assert _staged(tmp_path) is None
+
+
+@pytest.mark.parametrize("booked", [None, 30 * MIN])
+def test_rotate_without_a_due_wake_discards_a_staged_source(tmp_path, booked):
+    """No round of this rotation's own is coming — the line is dropped at the
+    respawn, so the next wake (a plain auto one) reads as the auto wake it is."""
+    from datetime import datetime, timezone
+
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    _mirror_render(host, tmp_path)
+    ledger = {"rotate_pending": True, "wake_source": SOURCE_LINE}
+    if booked is not None:
+        ledger["next_wake_at"] = datetime.fromtimestamp(
+            clock.t + booked, timezone.utc).isoformat()
+    shell_state.write(tmp_path / "shells", "tg", ledger)
+
+    async def run():
+        await host._fire("tg")               # rotate: respawn, no feed
+        assert fed == ["__RESPAWN__"]
+        assert _staged(tmp_path) is None     # never left standing
+        clock.t += (booked or 20 * MIN)
+        await host._fire("tg")               # the next, unrelated round
+
+    asyncio.run(run())
+    assert fed[1].startswith("⏳ [NEW ROUND]")
+    assert SOURCE_LINE not in fed[1] and "NOTE BODY" in fed[1]
+
+
+def test_duty_wake_without_rotation_keeps_its_source_line(tmp_path):
+    """The non-rotate path is untouched: the fed note claims the staged line
+    exactly as before, no respawn in between."""
+    from datetime import datetime, timezone
+
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    _mirror_render(host, tmp_path)
+    now_iso = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"next_wake_at": now_iso, "wake_source": SOURCE_LINE})
+
+    asyncio.run(host._fire("tg"))
+
+    assert len(fed) == 1 and SOURCE_LINE in fed[0]
+    assert _staged(tmp_path) is None
+
+
 def test_rotate_waits_for_an_in_flight_turn(tmp_path):
     """A rotate kick can land mid-turn; the respawn must not cut the stream."""
     cfg = _cfg(tmp_path)
