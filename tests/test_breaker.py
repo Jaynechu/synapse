@@ -74,6 +74,60 @@ def test_write_leaves_no_tmp_file(cdir):
     assert [p.name for p in cdir.iterdir() if ".tmp." in p.name] == []
 
 
+# --- duty hold union ------------------------------------------------------
+
+def _write_duty(cdir, hold) -> None:
+    breaker.duty_path(cdir).write_text(
+        json.dumps({"mode": "tg", "hold": hold, "ts": datetime.now().astimezone().isoformat()}),
+        encoding="utf-8")
+
+
+def test_duty_path_is_sibling_of_breaker_path(cdir):
+    assert breaker.duty_path(cdir) == breaker.breaker_path(cdir).with_name("duty.json")
+
+
+def test_absent_duty_file_holds_nothing(cdir):
+    assert breaker.duty_hold(cdir) is None
+    assert breaker.covers(cdir, "tg") is False
+
+
+def test_corrupt_duty_file_holds_nothing(cdir, caplog):
+    breaker.duty_path(cdir).write_text("{not json", encoding="utf-8")
+    assert breaker.duty_hold(cdir) is None
+    assert breaker.covers(cdir, "tg") is False
+
+
+def test_covers_true_via_duty_hold_alone(cdir):
+    _write_duty(cdir, "tg")
+    assert breaker.covers(cdir, "tg") is True
+    assert breaker.covers(cdir, "cli") is False
+
+
+def test_covers_true_via_manual_breaker_alone(cdir):
+    breaker.trip(cdir, "tg")
+    assert breaker.covers(cdir, "tg") is True
+    assert breaker.duty_hold(cdir) is None
+
+
+def test_covers_true_via_both_manual_and_duty(cdir):
+    breaker.trip(cdir, "cli")
+    _write_duty(cdir, "tg")
+    assert breaker.covers(cdir, "cli") is True
+    assert breaker.covers(cdir, "tg") is True
+
+
+def test_duty_hold_all_covers_every_shell(cdir):
+    _write_duty(cdir, "all")
+    assert breaker.covers(cdir, "cli") is True
+    assert breaker.covers(cdir, "tg") is True
+
+
+def test_duty_hold_null_holds_nothing(cdir):
+    _write_duty(cdir, None)
+    assert breaker.duty_hold(cdir) is None
+    assert breaker.covers(cdir, "tg") is False
+
+
 # --- settings + tally ---------------------------------------------------------
 
 def test_settings_read_from_marrow_config(cdir):

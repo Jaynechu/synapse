@@ -14,6 +14,13 @@ Sibling tally, appended by BOTH shells:
         {"events": [{"ts": iso, "shell": "cli"|"tg"}, ...]}
     pruned to [cortex.breaker].window_hours on every write
 
+Sibling duty hold, owned by the cortex-side duty rotation (this repo never
+writes it, covers() only unions it in):
+
+    <marrow config dir>/duty.json
+        {"mode": ..., "hold": "cli"|"tg"|"all"|null, "ts": iso}
+    absent/corrupt = no duty hold (fail-open)
+
 The JSON file IS the cross-repo protocol. Protocol copied, never imported (same
 rule as synapse_core.shell_state): the cortex repo ships its own independent
 copy (cortex/breaker.py). Thresholds live ONLY in marrow's config.toml under
@@ -36,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 BREAKER_FILE = "breaker.json"
 FUSE_FILE = "fuse_events.json"
+DUTY_FILE = "duty.json"
 
 SCOPE_ALL = "all"
 REASON_AUTO = "auto_fuse"
@@ -60,6 +68,10 @@ def breaker_path(config_dir: str | os.PathLike[str]) -> Path:
 
 def fuse_path(config_dir: str | os.PathLike[str]) -> Path:
     return Path(config_dir).expanduser() / FUSE_FILE
+
+
+def duty_path(config_dir: str | os.PathLike[str]) -> Path:
+    return breaker_path(config_dir).with_name(DUTY_FILE)
 
 
 def settings(config_dir: str | os.PathLike[str]) -> dict:
@@ -138,12 +150,24 @@ def read(config_dir: str | os.PathLike[str]) -> dict | None:
             "ts": str(d.get("ts") or "")}
 
 
+def duty_hold(config_dir: str | os.PathLike[str]) -> str | None:
+    """The materialised duty hold, or None. Read-only: this repo never writes
+    duty.json — it is owned by the cortex-side duty rotation."""
+    d = _read_json(duty_path(config_dir), {})
+    hold = d.get("hold")
+    if not isinstance(hold, str) or not hold.strip():
+        return None
+    return hold.strip().lower()
+
+
 def covers(config_dir: str | os.PathLike[str], shell: str) -> bool:
-    """Does the breaker hold `shell` down right now?"""
+    """Does the breaker OR the duty hold pin `shell` down right now?"""
+    shell = str(shell).strip().lower()
     state = read(config_dir)
-    if state is None:
-        return False
-    return state["scope"] in (SCOPE_ALL, str(shell).strip().lower())
+    if state is not None and state["scope"] in (SCOPE_ALL, shell):
+        return True
+    hold = duty_hold(config_dir)
+    return hold in (SCOPE_ALL, shell)
 
 
 def trip(config_dir: str | os.PathLike[str], scope: str = SCOPE_ALL,
