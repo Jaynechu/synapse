@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
-import signal
-import time
 import subprocess
 import sys
 from pathlib import Path
@@ -33,6 +32,21 @@ logger = logging.getLogger(__name__)
 CHANNEL = "tg"
 
 
+def _acquire_singleton_lock(path: Path) -> int:
+    """Non-blocking exclusive flock on `path`, held for the caller's lifetime.
+    Returns the open fd on success, -1 if another live process holds it. A
+    stale lock from a dead pid is reclaimed automatically — the kernel drops
+    an flock when its holder exits, so no pid probing is needed here."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return -1
+    return fd
+
+
 def _whitelist_filter(cfg) -> "filters.BaseFilter | None":
     """Build the sender gate from the effective whitelist (by Telegram user
     id, so an allowed sender is recognised in a group too). None = accept-all
@@ -57,22 +71,10 @@ def main() -> int:
     data_dir = cfg.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    pid_path = data_dir / "synapse-tg.pid"
-    if pid_path.exists():
-        try:
-            old_pid = int(pid_path.read_text().strip())
-            os.kill(old_pid, signal.SIGTERM)
-            logger.info("sent SIGTERM to stale process %d", old_pid)
-            time.sleep(1)
-            try:
-                os.kill(old_pid, 0)
-                os.kill(old_pid, signal.SIGKILL)
-                logger.info("SIGKILL stale process %d", old_pid)
-            except ProcessLookupError:
-                pass
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    pid_path.write_text(str(os.getpid()))
+    lock_fd = _acquire_singleton_lock(data_dir / "synapse-tg.lock")
+    if lock_fd < 0:
+        print("synapse-tg already running — exiting", file=sys.stderr)
+        return 1
 
     marker_dir = data_dir / "markers"
     marker_dir.mkdir(parents=True, exist_ok=True)
