@@ -131,8 +131,8 @@ WX_ICLOUD_PROMPT = (
 )
 
 NIGHT_SYSTEM_PROMPT = (
-    "Before 23:00, never proactively bring up sleep or push the user to go "
-    "to bed. Bedtime coaxing starts only when a 23:00 nudge arrives."
+    "Never proactively bring up sleep or push the user to go to bed "
+    "unless bedtime nudge activated."
 )
 
 
