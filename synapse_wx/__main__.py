@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
 import signal
-import time
 import subprocess
 import sys
 from dataclasses import asdict
@@ -73,6 +73,21 @@ SESSION_AUDIT_LOG = CONFIG_DIR / "session_audit.log"
 CC_STDERR_LOG = LOG_DIR / "synapse-wx-cc-stderr.log"
 
 
+def _acquire_singleton_lock(path: Path) -> int:
+    """Non-blocking exclusive flock on `path`, held for the caller's lifetime.
+    Returns the open fd on success, -1 if another live process holds it. A
+    stale lock from a dead pid is reclaimed automatically — the kernel drops
+    an flock when its holder exits, so no pid probing is needed here."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return -1
+    return fd
+
+
 def _wrap_ilink_with_alert_hook(ilink: ILinkClient, alerts: AlertSink) -> None:
     """Reapply the retry decorator on poll_messages/send_text so alerts.write fires
     after exhausted retries. The original decorator was applied without a hook;
@@ -116,22 +131,10 @@ def main() -> int:
         _reg._CWD_PRESETS = tuple(v for _, v in sorted(cfg.cwd_presets.items()) if v)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    pid_path = CONFIG_DIR / "synapse-wx.pid"
-    if pid_path.exists():
-        try:
-            old_pid = int(pid_path.read_text().strip())
-            os.kill(old_pid, signal.SIGTERM)
-            logger.info("sent SIGTERM to stale process %d", old_pid)
-            time.sleep(1)
-            try:
-                os.kill(old_pid, 0)
-                os.kill(old_pid, signal.SIGKILL)
-                logger.info("SIGKILL stale process %d", old_pid)
-            except ProcessLookupError:
-                pass
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    pid_path.write_text(str(os.getpid()))
+    lock_fd = _acquire_singleton_lock(CONFIG_DIR / "synapse-wx.lock")
+    if lock_fd < 0:
+        print("synapse-wx already running — exiting", file=sys.stderr)
+        return 1
 
     alerts = AlertSink(alerts_dir=ALERTS_DIR, marrow_repo_cmd=cfg.marrow_repo_cmd)
     media_inbound.set_inbound_alert_sink(alerts)
