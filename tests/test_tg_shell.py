@@ -1151,6 +1151,28 @@ def test_duty_wake_without_rotation_keeps_its_source_line(tmp_path):
     assert _staged(tmp_path) is None
 
 
+def test_user_message_before_the_duty_round_discards_the_source(tmp_path):
+    """The inbound message cancels the wake duty booked, so that round never
+    runs — the line goes with it, and the idle round that eventually comes is
+    a plain auto wake."""
+    clock = Clock()
+    host, _loop, fed = _host(tmp_path, clock)
+    _mirror_render(host, tmp_path)
+    shell_state.write(tmp_path / "shells", "tg",
+                      {"next_wake_at": _iso_utc(clock.t), "wake_source": SOURCE_LINE})
+
+    async def run():
+        host._arm()
+        host.on_user_message()               # lands first: the wake is off
+        assert _staged(tmp_path) is None
+        clock.t += 20 * MIN
+        await host._fire("tg")
+
+    asyncio.run(run())
+    assert len(fed) == 1
+    assert SOURCE_LINE not in fed[0] and "NOTE BODY" in fed[0]
+
+
 def test_rotate_waits_for_an_in_flight_turn(tmp_path):
     """A rotate kick can land mid-turn; the respawn must not cut the stream."""
     cfg = _cfg(tmp_path)

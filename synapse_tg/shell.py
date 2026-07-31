@@ -29,8 +29,9 @@ round's turn instead of the rendered note. A lie_down(rotate=True) writes
 ROTATE_KEY the same way and respawns the resident instead of feeding anything.
 
 A duty rotation also stages SOURCE_KEY — the one-shot line saying why this
-shell came up — which the note renderer claims on the round it delivers. A
-respawn round that feeds nothing has no such round, so it discards the line
+shell came up — which the note renderer claims on the round it delivers.
+Anything that ends the staged round without feeding it (a respawn with no wake
+of its own, an inbound message cancelling the booked wake) discards the line
 rather than let it surface on a later, unrelated wake.
 """
 
@@ -290,8 +291,11 @@ class ShellHost:
 
     def on_user_message(self) -> None:
         """Any inbound tg message cancels a booked wake and restarts the
-        silence cycle from now."""
+        silence cycle from now. A duty rotation's staged source line dies with
+        that wake: the round it was staged for is never fed, and the line is
+        true of no other one."""
         self._set_idle_basis(self._clock(), {"next_wake_at": None})
+        self._drop_source()
         self._arm()
 
     # --- fire -----------------------------------------------------------
