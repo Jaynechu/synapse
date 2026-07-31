@@ -55,7 +55,7 @@ DEFAULTS = {
     "window_hours": 24,
     "trip_message": (
         "Circuit breaker tripped: fuse #{count} within {hours}h. Cortex "
-        "autonomous activity paused ({scope}). Clear with ct-wake."
+        "autonomous activity paused ({scope}). Clear with ct-duty."
     ),
 }
 

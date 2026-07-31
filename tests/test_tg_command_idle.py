@@ -118,7 +118,7 @@ def _build_loop(tmp_path: Path, chat_id: int = 111) -> tuple[TgLoop, _ShellSpy]:
     "/model",               # known command, no argument
     "/xyz",                 # typo slash -> unknown.cmd ack
     "/opus 5o",             # typo of a model switch
-    "/ct-wake",             # skill name, never a bridge command
+    "/ct-duty",             # cc cli command, never a bridge command
     "opus",                 # bare natural alias
 ])
 async def test_dispatch_handled_text_does_not_count_as_activity(
@@ -213,7 +213,7 @@ def _wake(tmp_path: Path) -> float | None:
     return parse_wake_at(shell_state.read(tmp_path / "shells", "tg").get("next_wake_at"))
 
 
-@pytest.mark.parametrize("text", ["/info", "/opus 5o", "/model", "opus", "/ct-wake"])
+@pytest.mark.parametrize("text", ["/info", "/opus 5o", "/model", "opus", "/ct-duty"])
 def test_handled_text_keeps_the_booked_wake(tmp_path: Path, text: str) -> None:
     loop, clock = _booked_loop(tmp_path)
     booked = _wake(tmp_path)
