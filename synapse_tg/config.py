@@ -10,6 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "synapse-tg" / "config.toml"
+DEFAULT_LOG_PATH = Path.home() / ".config" / "marrow" / "logs" / "synapse-tg" / "synapse-tg.log"
 
 
 @dataclass
@@ -17,6 +18,9 @@ class TgConfig:
     bot_token: str = ""
     cc_path: str = "claude"
     data_dir: Path = field(default_factory=lambda: Path.home() / ".config" / "synapse-tg")
+    # [storage] log_file — empty falls back to DEFAULT_LOG_PATH. A second bot
+    # instance points this at its own file so the two never share a handler.
+    log_file: str = ""
     marrow_bridge: bool = False
     cwd: Path | None = None
     # Seeds BridgeState.model on a bridge that has never been switched. A
@@ -124,7 +128,7 @@ class TgConfig:
     shell_context_notify_start: int = 150000
     shell_context_notify_step: int = 50000
 
-    # CWD presets
+    # /cwd presets from [cwd_presets] — display name -> absolute path
     cwd_presets: dict = field(default_factory=dict)
 
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
@@ -303,6 +307,8 @@ def load_config(path: Path | None = None) -> TgConfig:
     if isinstance(storage, dict):
         if isinstance(storage.get("data_dir"), str):
             cfg.data_dir = Path(storage["data_dir"])
+        if isinstance(storage.get("log_file"), str):
+            cfg.log_file = storage["log_file"]
 
     provider_model = provider.get("default_model")
     if isinstance(provider_model, str) and provider_model:

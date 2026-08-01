@@ -486,29 +486,40 @@ def test_five_hour_nested_payload_supported() -> None:
 # ── /cwd ─────────────────────────────────────────────────────
 
 
-def test_cwd_no_arg_lists_presets() -> None:
+_PRESETS = (
+    ("ny", "/Users/Gabrielle/Desktop/NY"),
+    ("uni", "/Users/Gabrielle/Library/Mobile Documents/com~apple~CloudDocs/Study"),
+    ("marrow", "/Users/Gabrielle/CC-Lab/marrow"),
+)
+
+
+def test_cwd_no_arg_lists_presets(monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+    monkeypatch.setattr(_reg_mod, "_CWD_PRESETS", _PRESETS)
     s = BridgeState(cc_cwd="/Users/Gabrielle/Desktop/NY")
     reg, _, _ = _make(s)
     verdict, reply = reg.dispatch("/cwd")
     assert verdict == "handled"
     assert reply is not None
     assert "当前位置 /Users/Gabrielle/Desktop/NY" in reply
-    assert "1 → NY" in reply
-    assert "2 → Study" in reply
-    assert "3 → marrow" in reply
+    assert "  1 → ny" in reply
+    assert "  2 → uni" in reply
+    assert "  3 → marrow" in reply
+
+
+def test_cwd_menu_empty_presets_renders_without_crash(monkeypatch) -> None:
+    import synapse_core.commands.registry as _reg_mod
+    monkeypatch.setattr(_reg_mod, "_CWD_PRESETS", ())
+    s = BridgeState(cc_cwd="/Users/Gabrielle/Desktop/NY")
+    reg, _, _ = _make(s)
+    verdict, reply = reg.dispatch("/cwd")
+    assert verdict == "handled"
+    assert reply is not None and "→" not in reply
 
 
 def test_cwd_preset_digit_switches_and_clears(tmp_path, monkeypatch) -> None:
     import synapse_core.commands.registry as _reg_mod
-    monkeypatch.setattr(
-        _reg_mod,
-        "_CWD_PRESETS",
-        (
-            "/Users/Gabrielle/Desktop/NY",
-            "/Users/Gabrielle/Library/Mobile Documents/com~apple~CloudDocs/Study",
-            "/Users/Gabrielle/CC-Lab/marrow",
-        ),
-    )
+    monkeypatch.setattr(_reg_mod, "_CWD_PRESETS", _PRESETS)
     s = BridgeState(
         cc_cwd="/Users/Gabrielle/Desktop/NY",
         session_id="old-sid",
@@ -583,15 +594,7 @@ def test_cwd_path_is_file_rejected(tmp_path) -> None:
 
 def test_cwd_picker_bare_digit_switches(monkeypatch) -> None:
     import synapse_core.commands.registry as _reg_mod
-    monkeypatch.setattr(
-        _reg_mod,
-        "_CWD_PRESETS",
-        (
-            "/Users/Gabrielle/Desktop/NY",
-            "/Users/Gabrielle/Library/Mobile Documents/com~apple~CloudDocs/Study",
-            "/Users/Gabrielle/CC-Lab/marrow",
-        ),
-    )
+    monkeypatch.setattr(_reg_mod, "_CWD_PRESETS", _PRESETS)
     s = BridgeState(cc_cwd="/Users/Gabrielle/Desktop/NY")
     reg, _, _ = _make(s)
     # /cwd alone arms the picker.

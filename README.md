@@ -30,7 +30,7 @@ Requires [marrow](https://github.com/Jaynechu/marrow) installed separately.
 
 - `[provider]` — cc path, cwd, marrow toggle
 - `[persona]` — user/assistant display names
-- `[cwd_presets]` — numbered shortcuts for `/cwd N`
+- `[cwd_presets]` — named shortcuts for `/cwd N` (key = menu label, order = digit)
 - `[marrow]` — db path + sessionend command template
 
 ## Commands

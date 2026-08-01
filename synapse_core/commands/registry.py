@@ -48,14 +48,22 @@ _EFFORT_LEVELS: frozenset[str] = frozenset(
     {"low", "medium", "high", "xhigh", "max", "ultracode", "auto"}
 )
 
-# /cwd presets. Index = digit shown to user; preset 1 is the boot fallback
-# when persisted state.cc_cwd no longer exists on disk. Both bridges override
-# this at boot from their config's [cwd_presets]; the SYNAPSE_CWD_PRESETS env
-# var (colon-separated paths) is the fallback when that table is absent, and an
-# empty tuple means "no presets" rather than hardcoded paths.
-_CWD_PRESETS: tuple[str, ...] = tuple(
-    p for p in os.environ.get("SYNAPSE_CWD_PRESETS", "").split(":") if p.strip()
+# /cwd presets as (display name, path) pairs in config document order. Index =
+# digit shown to user; preset 1 is the boot fallback when persisted state.cc_cwd
+# no longer exists on disk. Both bridges override this at boot from their
+# config's [cwd_presets] (key = display name); the SYNAPSE_CWD_PRESETS env var
+# (colon-separated paths, name derived from basename) is the fallback when that
+# table is absent, and an empty tuple means "no presets".
+_CWD_PRESETS: tuple[tuple[str, str], ...] = tuple(
+    (Path(p.strip()).name or p.strip(), p.strip())
+    for p in os.environ.get("SYNAPSE_CWD_PRESETS", "").split(":")
+    if p.strip()
 )
+
+
+def _format_cwd_presets() -> str:
+    """Render the /cwd jump menu, one 1-based ``  {i} → {name}`` line each."""
+    return "\n".join(f"  {i} → {name}" for i, (name, _) in enumerate(_CWD_PRESETS, 1))
 
 
 def _fmt_last_active(raw: str | None) -> str:
@@ -781,12 +789,14 @@ class Registry:
         if not token:
             # Arm the picker so a bare digit in the next message picks a preset.
             state.pending_picker = "cwd"
-            return self._t("cwd.show", cur=state.cc_cwd or "?")
+            return self._t(
+                "cwd.show", cur=state.cc_cwd or "?", list=_format_cwd_presets()
+            )
         if token.isdigit():
             idx = int(token) - 1
             if idx < 0 or idx >= len(_CWD_PRESETS):
                 return self._t("cwd.no_n", n=token)
-            new_path = _CWD_PRESETS[idx]
+            new_path = _CWD_PRESETS[idx][1]
         else:
             try:
                 resolved = Path(token).expanduser().resolve()

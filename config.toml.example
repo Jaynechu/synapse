@@ -130,9 +130,10 @@ assistant_name = ""
 db = "~/.config/marrow/marrow.db"
 
 [cwd_presets]
-# Named shortcuts for /cwd N command. Map number to absolute path.
-# 1 = "/path/to/project-a"
-# 2 = "/path/to/project-b"
+# Named shortcuts for /cwd N. Key = name shown in the menu, value = absolute
+# path. Document order = the digit the user types (first entry is 1).
+# proj-a = "/path/to/project-a"
+# proj-b = "/path/to/project-b"
 
 [alerts]
 # Command to pipe alerts into marrow (optional)

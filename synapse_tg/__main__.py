@@ -24,7 +24,7 @@ from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
 from synapse_core.usage import UsageClient
 
-from .config import load_config
+from .config import DEFAULT_LOG_PATH, load_config
 from .loop import TgLoop
 
 logger = logging.getLogger(__name__)
@@ -58,8 +58,11 @@ def _whitelist_filter(cfg) -> "filters.BaseFilter | None":
 
 
 def main() -> int:
-    configure_logging(Path.home() / ".config/marrow/logs/synapse-tg/synapse-tg.log")
-    cfg = load_config()
+    # SYNAPSE_TG_CONFIG lets a second bot instance run the same code against
+    # its own config (own token, data_dir, log file).
+    config_path = os.environ.get("SYNAPSE_TG_CONFIG", "").strip()
+    cfg = load_config(Path(config_path) if config_path else None)
+    configure_logging(Path(cfg.log_file) if cfg.log_file else DEFAULT_LOG_PATH)
     if cfg.ack_overrides:
         messages.load_overrides(cfg.ack_overrides)
 
@@ -164,7 +167,7 @@ def main() -> int:
     if cfg.cwd_presets:
         import synapse_core.commands.registry as _reg
         _reg._CWD_PRESETS = tuple(
-            v for _, v in sorted(cfg.cwd_presets.items()) if v
+            (k, v) for k, v in cfg.cwd_presets.items() if v
         )
 
     def _record_effort(sid: str, effort: str) -> None:

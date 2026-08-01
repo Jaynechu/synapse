@@ -128,7 +128,7 @@ def main() -> int:
     # /cwd presets: config wins over the SYNAPSE_CWD_PRESETS env fallback.
     if cfg.cwd_presets:
         import synapse_core.commands.registry as _reg
-        _reg._CWD_PRESETS = tuple(v for _, v in sorted(cfg.cwd_presets.items()) if v)
+        _reg._CWD_PRESETS = tuple((k, v) for k, v in cfg.cwd_presets.items() if v)
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     lock_fd = _acquire_singleton_lock(CONFIG_DIR / "synapse-wx.lock")

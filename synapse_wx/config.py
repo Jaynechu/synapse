@@ -97,7 +97,7 @@ class Config:
     # iCloud outbox for outbound files exceeding the CDN ceiling (C1 fallback).
     icloud_outbox: str = "~/Documents/CC-Drop"
 
-    # /cwd presets from [cwd_presets] — digit -> absolute path
+    # /cwd presets from [cwd_presets] — display name -> absolute path
     cwd_presets: dict | None = None
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
     ack_overrides: dict | None = None
