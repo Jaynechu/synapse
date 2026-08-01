@@ -58,6 +58,8 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - [tg] split_for_tg — 4096-char, paragraph split. Streaming: edit_message_text ~1s/200ch throttle → final gfm_to_tg_html. Thinking: full text. Media: bot.send_photo/document/animation/video (TG CDN, no AES). Sticker: bot.send_sticker (webp).
 - [wx] split_for_wechat — 200-char paragraph/sentence split. Media upload two-step CDN (getuploadurl → AES-128-ECB POST). CDN quirks: MicroMessenger UA required, ~1/3 flaky → 3 retries. Image downscale ≤250KB via sips. 550KB ceiling (chunked = FUTURE). Thinking: one bubble, full text.
 - Ack strings: messages.py t(key, style) — cn/en pairs mandatory. Style persisted in BridgeState.voice_style.
+- [tg] Shell receipts `shell.lie_down` 💤 / `shell.rotated*` 🌙 / `shell.transferred*` 🔄: rendered at tool_use (or rotate kick), queued on `_pending_notices`, shipped after the cycle's reply text; a textless cycle still ships them. `_notice_defer` marks a cycle in flight (check_flush / feed_turn / _drain_unsolicited); a rotate outside one sends at once.
+- [tg] One action, one receipt: `transfer(rotate=True)` ships the combined `shell.transferred_rotated` and claims the rotation, so `shell_rotate` stays silent. Target shell = the other entry in marrow `[cortex].shells` (`TgConfig.shell_peer()`, fallback `[cortex].shell_peer_fallback`).
 
 ## 5. Resident listener (unsolicited turns)
 

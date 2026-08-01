@@ -323,6 +323,14 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "🌙 Rotated {min}min {time}",
         "en": "🌙 Rotated {min}min {time}",
     },
+    "shell.transferred": {
+        "cn": "🔄 Transferred to {shell}",
+        "en": "🔄 Transferred to {shell}",
+    },
+    "shell.transferred_rotated": {
+        "cn": "🔄 Transferred to {shell} · rotated",
+        "en": "🔄 Transferred to {shell} · rotated",
+    },
 }
 
 

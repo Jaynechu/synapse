@@ -165,6 +165,13 @@ class TgLoop:
         # Cortex shell host (T9), attached by __main__ when shell_active().
         # None = plain relay resident, every shell branch below is skipped.
         self._shell = None
+        # Shell receipts (💤 / 🌙 / 🔄) held until the running reply cycle has
+        # shipped its text, so they land under the reply instead of above it.
+        self._pending_notices: list[str] = []
+        self._notice_defer = 0
+        # A transfer(rotate=True) owns the rotation it triggers: its combined
+        # receipt is already queued, so the rotate path must not add a 🌙.
+        self._transfer_rotate_pending = False
 
     def attach_shell(self, shell) -> None:
         self._shell = shell
@@ -458,8 +465,8 @@ class TgLoop:
 
         `first_line` is a raw line the idle listener already pulled off the
         queue that opened this turn; recv processes it before the queue.
-        `bot`/`chat_id` (when known) let a lie_down(rotate=False) tool_use
-        send its 💤 notice immediately.
+        `bot`/`chat_id` (when known) let a lie_down(rotate=False) or transfer
+        tool_use queue its receipt for the end of the reply cycle.
         """
         assert self._provider is not None
         q: queue.Queue = queue.Queue()
@@ -512,7 +519,9 @@ class TgLoop:
                         if name.endswith("lie_down"):
                             tool_input = block.get("input") or {}
                             if not tool_input.get("rotate"):
-                                await self._notify_lie_down(bot, chat_id, tool_input)
+                                self._queue_lie_down(bot, chat_id, tool_input)
+                        elif name.endswith("transfer"):
+                            self._queue_transfer(bot, chat_id, block.get("input") or {})
                     elif bt == "thinking":
                         # cc fills BOTH the stream_event thinking_delta path
                         # and this final-frame thinking block with the same
@@ -654,27 +663,33 @@ class TgLoop:
         """Collect and deliver the unsolicited turn opened by first_line, plus
         any consecutive back-to-back turns already queued behind it. Each queued
         line is classified too: a non-turn line (spawn handshake) is consumed
-        without entering the blocking drain."""
+        without entering the blocking drain. Shell receipts raised by any of
+        those turns ship once, after the last one's text."""
         count = 0
         line: str | None = first_line
-        while line is not None:
-            if not self._consume_non_turn_line(line):
-                turn = await self._collect_turn(typing, first_line=line, bot=bot, chat_id=chat_id)
-                if turn is not None:
-                    text, thinking, _unsolicited = turn
-                    count += 1
-                    self._maybe_storm_alert(count)
-                    await self._deliver_reply(bot, chat_id, text, thinking)
-            # Peek for the next queued turn without blocking on idle liveness.
-            provider = self._provider
-            if provider is None or not getattr(provider, "alive", False):
-                break
-            nxt = provider.poll_line(0.0)
-            if nxt is None or nxt is POLL_EOF:
-                if nxt is POLL_EOF:
-                    provider.alive = False
-                break
-            line = nxt
+        self._notice_defer += 1
+        try:
+            while line is not None:
+                if not self._consume_non_turn_line(line):
+                    turn = await self._collect_turn(typing, first_line=line, bot=bot, chat_id=chat_id)
+                    if turn is not None:
+                        text, thinking, _unsolicited = turn
+                        count += 1
+                        self._maybe_storm_alert(count)
+                        await self._deliver_reply(bot, chat_id, text, thinking)
+                # Peek for the next queued turn without blocking on idle liveness.
+                provider = self._provider
+                if provider is None or not getattr(provider, "alive", False):
+                    break
+                nxt = provider.poll_line(0.0)
+                if nxt is None or nxt is POLL_EOF:
+                    if nxt is POLL_EOF:
+                        provider.alive = False
+                    break
+                line = nxt
+        finally:
+            self._notice_defer -= 1
+            await self._flush_notices(bot, chat_id)
 
     async def _idle_listener(self) -> None:
         """Resident task: drain unsolicited turns between sends for the life of
@@ -709,11 +724,11 @@ class TgLoop:
         now = datetime.now(self._tz)
         return (now + timedelta(minutes=minutes)).strftime("%H:%M")
 
-    async def _notify_lie_down(
+    def _queue_lie_down(
         self, bot: Bot | None, chat_id: int | None, tool_input: dict
     ) -> None:
-        """lie_down(rotate=False) tool_use: send the 💤 notice right away.
-        No-op without a known chat target; never raises into the turn."""
+        """lie_down(rotate=False) tool_use: queue the 💤 receipt for the end of
+        the reply cycle. No-op without a known chat target."""
         if bot is None or chat_id is None:
             return
         try:
@@ -722,12 +737,53 @@ class TgLoop:
             logger.warning("lie_down notice: bad next_wake_min %r",
                            tool_input.get("next_wake_min"))
             return
-        text = messages.t("shell.lie_down", self._state.voice_style,
-                          min=mins, time=self._local_hhmm_plus(mins))
+        self._pending_notices.append(
+            messages.t("shell.lie_down", self._state.voice_style,
+                       min=mins, time=self._local_hhmm_plus(mins))
+        )
+
+    def _queue_transfer(
+        self, bot: Bot | None, chat_id: int | None, tool_input: dict
+    ) -> None:
+        """transfer tool_use: queue the 🔄 receipt for the end of the reply
+        cycle. transfer(rotate=True) gets ONE combined receipt and claims the
+        rotation, so shell_rotate stays silent for it. No-op without a known
+        chat target."""
+        if bot is None or chat_id is None:
+            return
+        rotate = bool(tool_input.get("rotate"))
+        if rotate:
+            self._transfer_rotate_pending = True
+        key = "shell.transferred_rotated" if rotate else "shell.transferred"
+        self._pending_notices.append(
+            messages.t(key, self._state.voice_style, shell=self._cfg.shell_peer())
+        )
+
+    async def _send_notice(self, bot: Bot, chat_id: int, text: str) -> None:
         try:
             await bot.send_message(chat_id=chat_id, text=text)
         except Exception as e:
-            logger.warning("lie_down notice send failed: %s", e)
+            logger.warning("shell notice send failed: %s", e)
+
+    async def _emit_notice(self, bot: Bot, chat_id: int, text: str) -> None:
+        """Ship a shell receipt: held back while a reply cycle is running,
+        sent right away when none is."""
+        if self._notice_defer > 0:
+            self._pending_notices.append(text)
+            return
+        await self._send_notice(bot, chat_id, text)
+
+    async def _flush_notices(self, bot: Bot | None, chat_id: int | None) -> None:
+        """Ship every queued receipt, once, after the cycle's reply text.
+        Drops the queue when there is no chat target to ship to."""
+        if not self._pending_notices:
+            return
+        pending, self._pending_notices = self._pending_notices, []
+        if bot is None or chat_id is None:
+            logger.warning("shell notices dropped — no chat target")
+            return
+        for text in pending:
+            await self._send_notice(bot, chat_id, text)
 
     def _maybe_storm_alert(self, count: int) -> None:
         """More than unsolicited_storm_cap unsolicited turns in one lock-hold
@@ -1164,61 +1220,69 @@ class TgLoop:
         logger.info("flush: %r", body[:120])
         typing = TypingAction(bot, chat_id)
 
-        async with self._lock:
-            try:
-                # Retry-once: on a mid-turn stall/death, respawn resuming the
-                # same sid and re-send the SAME body ONCE. Second failure ->
-                # user-facing notice. Bridges emit outbound only from completed
-                # events, so a retried turn double-sends nothing.
-                response = thinking = None
-                for attempt in range(2):
-                    try:
-                        self.ensure_provider()
-                        assert self._provider is not None
-                        typing.start()
-                        await asyncio.to_thread(self._provider.send, body)
-                        response, thinking = await self._stream_response(bot, chat_id, typing)
-                        if self._provider and self._provider.session_id:
-                            if self._state.session_id != self._provider.session_id:
-                                self._state.session_id = self._provider.session_id
-                                self._persist_state()
-                        break
-                    except ProviderDeadError as e:
-                        if self._user_initiated_close:
-                            self._user_initiated_close = False
+        # Shell receipts raised anywhere in this cycle (💤 / 🔄 tool_use, a
+        # rotate kick landing mid-turn) wait for the finally below, so they
+        # land under the reply text instead of above it.
+        self._notice_defer += 1
+        try:
+            async with self._lock:
+                try:
+                    # Retry-once: on a mid-turn stall/death, respawn resuming the
+                    # same sid and re-send the SAME body ONCE. Second failure ->
+                    # user-facing notice. Bridges emit outbound only from completed
+                    # events, so a retried turn double-sends nothing.
+                    response = thinking = None
+                    for attempt in range(2):
+                        try:
+                            self.ensure_provider()
+                            assert self._provider is not None
+                            typing.start()
+                            await asyncio.to_thread(self._provider.send, body)
+                            response, thinking = await self._stream_response(bot, chat_id, typing)
+                            if self._provider and self._provider.session_id:
+                                if self._state.session_id != self._provider.session_id:
+                                    self._state.session_id = self._provider.session_id
+                                    self._persist_state()
+                            break
+                        except ProviderDeadError as e:
+                            if self._user_initiated_close:
+                                self._user_initiated_close = False
+                                return
+                            logger.error("provider error (attempt %d/2): %s", attempt + 1, e)
+                            self._respawn()
+                            if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+                                logger.error("provider gave up after %d consecutive deaths", self._death_count)
+                                self._provider = None
+                                await self._send_provider_notice(bot, chat_id, "provider.gave_up")
+                                return
+                            if attempt == 0:
+                                continue
+                            # Second failure: hand back to the buffer + notice.
+                            self._buffer.prepend(body)
+                            await self._send_provider_notice(bot, chat_id, "provider.restarting")
                             return
-                        logger.error("provider error (attempt %d/2): %s", attempt + 1, e)
-                        self._respawn()
-                        if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
-                            logger.error("provider gave up after %d consecutive deaths", self._death_count)
-                            self._provider = None
-                            await self._send_provider_notice(bot, chat_id, "provider.gave_up")
-                            return
-                        if attempt == 0:
-                            continue
-                        # Second failure: hand back to the buffer + notice.
-                        self._buffer.prepend(body)
-                        await self._send_provider_notice(bot, chat_id, "provider.restarting")
-                        return
-            except Exception as e:
-                logger.error("unexpected error: %s", e)
-                await bot.send_message(chat_id=chat_id, text=messages.t("bridge.error", self._state.voice_style))
-                return
-            finally:
-                typing.stop()
+                except Exception as e:
+                    logger.error("unexpected error: %s", e)
+                    await bot.send_message(chat_id=chat_id, text=messages.t("bridge.error", self._state.voice_style))
+                    return
+                finally:
+                    typing.stop()
 
-        # Turn output cap: the provider interrupted a runaway turn (brake, not
-        # a failure — no retry). Notify the user; the partial reply below still
-        # ships. Notice fires once per capped turn.
-        if self._provider is not None and getattr(
-            self._provider, "turn_output_capped", False
-        ):
-            await self._send_provider_notice(bot, chat_id, "provider.turn_capped")
+            # Turn output cap: the provider interrupted a runaway turn (brake, not
+            # a failure — no retry). Notify the user; the partial reply below still
+            # ships. Notice fires once per capped turn.
+            if self._provider is not None and getattr(
+                self._provider, "turn_output_capped", False
+            ):
+                await self._send_provider_notice(bot, chat_id, "provider.turn_capped")
 
-        # Reply always ships. Messages that arrived mid-turn stayed in the
-        # InboundBuffer (never drained) and become the next turn — no merge,
-        # no reply-drop.
-        await self._deliver_reply(bot, chat_id, response, thinking)
+            # Reply always ships. Messages that arrived mid-turn stayed in the
+            # InboundBuffer (never drained) and become the next turn — no merge,
+            # no reply-drop.
+            await self._deliver_reply(bot, chat_id, response, thinking)
+        finally:
+            self._notice_defer -= 1
+            await self._flush_notices(bot, chat_id)
         await self._shell_after_turn()
 
     async def _shell_after_turn(self) -> None:
@@ -1241,22 +1305,27 @@ class TgLoop:
             logger.warning("feed_turn: no chat target — round skipped")
             return False
         typing = TypingAction(bot, chat_id)
-        async with self._lock:
-            try:
-                self.ensure_provider()
-                if self._provider is None:
-                    logger.warning("feed_turn: no provider — round skipped")
+        self._notice_defer += 1
+        try:
+            async with self._lock:
+                try:
+                    self.ensure_provider()
+                    if self._provider is None:
+                        logger.warning("feed_turn: no provider — round skipped")
+                        return False
+                    typing.start()
+                    await asyncio.to_thread(self._provider.send, body)
+                    response, thinking = await self._stream_response(bot, chat_id, typing)
+                except Exception as e:
+                    logger.warning("feed_turn failed: %s", e)
                     return False
-                typing.start()
-                await asyncio.to_thread(self._provider.send, body)
-                response, thinking = await self._stream_response(bot, chat_id, typing)
-            except Exception as e:
-                logger.warning("feed_turn failed: %s", e)
-                return False
-            finally:
-                typing.stop()
-        await self._deliver_reply(bot, chat_id, response, thinking)
-        return True
+                finally:
+                    typing.stop()
+            await self._deliver_reply(bot, chat_id, response, thinking)
+            return True
+        finally:
+            self._notice_defer -= 1
+            await self._flush_notices(bot, chat_id)
 
     def shell_respawn(self) -> None:
         """Drop the resident session and spawn a fresh one (fuse). Queued user
@@ -1273,9 +1342,15 @@ class TgLoop:
         gets for free by respawning after its turn — a rotate kick can land
         mid-turn. This is the truthful rotation signal (a rotate tool_use
         alone can be denied by a marrow hook) — send the 🌙 notice here, and
-        carry the booked wake (`wake`, epoch seconds) when there is one."""
+        carry the booked wake (`wake`, epoch seconds) when there is one. A
+        rotation a transfer asked for is already covered by the 🔄 receipt:
+        one action, one receipt."""
         async with self._lock:
             self.shell_respawn()
+        transfer_owned = self._transfer_rotate_pending
+        self._transfer_rotate_pending = False
+        if transfer_owned:
+            return
         bot, chat_id = self._outbound_target()
         if bot is None or chat_id is None:
             return
@@ -1288,10 +1363,7 @@ class TgLoop:
             text = messages.t(
                 "shell.rotated_wake", self._state.voice_style, min=mins,
                 time=datetime.fromtimestamp(wake, self._tz).strftime("%H:%M"))
-        try:
-            await bot.send_message(chat_id=chat_id, text=text)
-        except Exception as e:
-            logger.warning("rotate notice send failed: %s", e)
+        await self._emit_notice(bot, chat_id, text)
 
     async def _deliver_reply(
         self, bot: Bot, chat_id: int, response: str, thinking: str

@@ -90,6 +90,9 @@ class TgConfig:
     # socket path SHORT: macOS caps an AF_UNIX path at 104 bytes.
     shell_state_dir: str = "~/.config/marrow/state/shells"
     shell_socket: str = "~/.config/marrow/state/shells/tg.sock"
+    # Rendered in the 🔄 transfer receipt when the peer shell cannot be read
+    # off marrow's [cortex].shells.
+    shell_peer_fallback: str = "?"
     # Minutes of user silence before one rendered note turn is fed in.
     # Cross-repo contract: keep in step with cortex's [watchdog].silent_max_min
     # (the cli shell's free-round cycle), also 20.
@@ -136,23 +139,34 @@ class TgConfig:
         protocol files marrow, cortex and this bridge all read."""
         return Path(self.marrow_db).expanduser().parent
 
-    def shell_active(self) -> bool:
-        """Is `shell_id` listed in marrow's [cortex].shells (T7: single
-        source, resolved via marrow_config_dir — same file cortex's
-        shell_enabled() reads)? Missing/unreadable marrow config or missing
-        key -> shell off (standalone-synapse fallback)."""
+    def _cortex_shells(self) -> list[str]:
+        """marrow's [cortex].shells, lowercased (T7: single source, resolved
+        via marrow_config_dir — same file cortex's shell_enabled() reads).
+        Missing/unreadable marrow config or missing key -> empty list."""
         p = self.marrow_config_dir() / "config.toml"
         try:
             if p.is_file():
                 data = tomllib.loads(p.read_bytes().decode("utf-8"))
                 shells = (data.get("cortex") or {}).get("shells")
                 if isinstance(shells, list):
-                    return self.shell_id.strip().lower() in [
-                        str(s).strip().lower() for s in shells
-                    ]
+                    return [str(s).strip().lower() for s in shells]
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, TypeError) as e:
-            logger.warning("shell_active: marrow config read failed (%s) — shell off", e)
-        return False
+            logger.warning("marrow config read failed (%s) — shell off", e)
+        return []
+
+    def shell_active(self) -> bool:
+        """Is `shell_id` listed in marrow's [cortex].shells? Unresolvable ->
+        shell off (standalone-synapse fallback)."""
+        return self.shell_id.strip().lower() in self._cortex_shells()
+
+    def shell_peer(self) -> str:
+        """The other cortex shell a transfer from this one lands on. Falls
+        back to shell_peer_fallback when [cortex].shells names no other."""
+        me = self.shell_id.strip().lower()
+        for s in self._cortex_shells():
+            if s != me:
+                return s
+        return self.shell_peer_fallback
 
     def effective_allowed_user_ids(self) -> list[int]:
         """Whitelist actually enforced: allowed_user_ids if set, else
@@ -229,6 +243,7 @@ def load_config(path: Path | None = None) -> TgConfig:
             ("shell_state_dir", "shell_state_dir"),
             ("shell_socket", "shell_socket"),
             ("shell_note_tag", "shell_note_tag"),
+            ("shell_peer_fallback", "shell_peer_fallback"),
             ("fuse_tag", "shell_fuse_tag"),
             ("fuse_prompt_text", "shell_fuse_prompt_text"),
         ):
