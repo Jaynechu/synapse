@@ -28,10 +28,14 @@ receipt_text_chars = 120
 kick_media_placeholder = "[media]"
 
 # ── Cortex shell (tg) ─────────────────────────────────
-# Active iff shell_id below is a member of marrow's [cortex].shells (single
-# source — no enable flag here). Absent from that list = plain relay resident
-# (no scheduler, no silence cycle, no cortex env).
+# Active iff shell_enabled AND shell_id below is a member of marrow's
+# [cortex].shells. Inactive = plain relay resident (no scheduler, no silence
+# cycle, no cortex env).
 [cortex]
+# Hard off-switch for this instance. Set false on any secondary bot instance:
+# shell_id defaults to "tg", which IS in marrow's list, so a second instance
+# left on would race the primary for the same socket and ledger.
+shell_enabled = true
 # Shell id handed to marrow as MARROW_CORTEX; must appear in marrow's
 # [cortex].shells list for the resident to get the cortex tools.
 shell_id = "tg"

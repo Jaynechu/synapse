@@ -85,10 +85,13 @@ class TgConfig:
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
-    # Cortex shell (T9). Active iff shell_id is a member of marrow's
-    # [cortex].shells (T7: single source, see shell_active()) — no local
-    # enable flag. Inactive = the resident is a plain relay, exactly as
-    # before: no scheduler task, no silence cycle, no MARROW_CORTEX env.
+    # Cortex shell (T9). Active iff shell_enabled AND shell_id is a member of
+    # marrow's [cortex].shells (T7: single source, see shell_active()).
+    # shell_enabled=false makes this instance a plain relay regardless of
+    # shell_id — required for secondary bot instances, whose default shell_id
+    # ("tg") would otherwise claim the primary's socket and ledger. Inactive =
+    # no scheduler task, no silence cycle, no MARROW_CORTEX env.
+    shell_enabled: bool = True
     shell_id: str = "tg"
     # Ledger shared with marrow (<dir>/<shell>.json) + kick socket. Keep the
     # socket path SHORT: macOS caps an AF_UNIX path at 104 bytes.
@@ -159,8 +162,10 @@ class TgConfig:
         return []
 
     def shell_active(self) -> bool:
-        """Is `shell_id` listed in marrow's [cortex].shells? Unresolvable ->
-        shell off (standalone-synapse fallback)."""
+        """shell_enabled AND `shell_id` listed in marrow's [cortex].shells.
+        Unresolvable -> shell off (standalone-synapse fallback)."""
+        if not self.shell_enabled:
+            return False
         return self.shell_id.strip().lower() in self._cortex_shells()
 
     def shell_peer(self) -> str:
@@ -238,10 +243,8 @@ def load_config(path: Path | None = None) -> TgConfig:
 
     cortex = data.get("cortex") or {}
     if isinstance(cortex, dict):
-        if "shell_enabled" in cortex:
-            logger.warning(
-                "[cortex] shell_enabled is ignored — shell activity is now "
-                "driven by marrow's [cortex].shells only")
+        if isinstance(cortex.get("shell_enabled"), bool):
+            cfg.shell_enabled = cortex["shell_enabled"]
         for key, attr in (
             ("shell_id", "shell_id"),
             ("shell_state_dir", "shell_state_dir"),

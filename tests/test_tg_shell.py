@@ -149,6 +149,22 @@ def _host(tmp_path, clock, *, feeds=None, **kw):
 
 # ── occupancy / ledger parsing ────────────────────────────────────────────────
 
+def test_shell_active_true_when_enabled_and_listed(tmp_path):
+    assert _cfg(tmp_path).shell_active() is True
+
+
+def test_shell_enabled_false_overrides_marrow_shells(tmp_path):
+    assert _cfg(tmp_path, shell_enabled=False).shell_active() is False
+
+
+def test_load_config_parses_shell_enabled(tmp_path):
+    p = tmp_path / "tg.toml"
+    p.write_text('[cortex]\nshell_enabled = false\n')
+    assert load_config(p).shell_enabled is False
+    p.write_text('[cortex]\nshell_id = "tg"\n')
+    assert load_config(p).shell_enabled is True
+
+
 def test_occupancy_sums_the_four_cortex_keys():
     usage = {"input_tokens": 10, "cache_read_input_tokens": 100,
              "cache_creation_input_tokens": 5, "output_tokens": 1,
@@ -1349,13 +1365,13 @@ def test_config_parses_the_cortex_section(tmp_path):
     assert cfg.shell_fuse_tokens == 1234
 
 
-def test_config_leftover_shell_enabled_key_warns_not_fatal(tmp_path, caplog):
+def test_config_shell_enabled_true_parses_quietly(tmp_path, caplog):
     p = tmp_path / "config.toml"
     p.write_text('[cortex]\nshell_enabled = true\n')
     with caplog.at_level("WARNING"):
         cfg = load_config(p)
-    assert any("shell_enabled" in r.message for r in caplog.records)
-    assert not hasattr(cfg, "shell_enabled")
+    assert not any("shell_enabled" in r.message for r in caplog.records)
+    assert cfg.shell_enabled is True
 
 
 # ── state file protocol ───────────────────────────────────────────────────────
