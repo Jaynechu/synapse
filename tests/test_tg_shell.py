@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from synapse_core import shell_state
+from synapse_core.sessionend.tracker import SessionTracker
 from synapse_tg.config import TgConfig, load_config
 from synapse_tg.loop import TgLoop
 from synapse_tg.shell import ShellHost, occupancy, parse_wake_at
@@ -926,6 +927,34 @@ def test_respawn_drops_session_and_keeps_queued_user_messages(tmp_path):
     assert loop._state.session_id is None
     assert spawned == [None]                     # fresh, no --resume sid
     assert loop._buffer.flush() == "hello from mid-fuse"
+
+
+def test_respawn_clears_the_session_tracker_like_forget_session(tmp_path):
+    """shell_respawn ends the window the same way /clear does: the per-chat
+    SessionTracker mapping must not survive into the fresh session."""
+    cfg = _cfg(tmp_path)
+    sessions = SessionTracker(state_path=tmp_path / "sessions.json")
+    sessions.set("4242", "old-sid")
+    loop = TgLoop(cfg, sessions=sessions)
+    loop._state.session_id = "old-sid"
+
+    class _P:
+        alive = True
+        session_id = None
+
+        def spawn(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    loop._provider = _P()
+    loop._make_provider = lambda: _P()
+
+    loop.shell_respawn()
+
+    assert sessions.snapshot() == {}
+    assert loop._state.session_id is None
 
 
 # ── every window end folds, not just the fuse ─────────────────────────────────

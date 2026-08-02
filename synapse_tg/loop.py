@@ -1332,6 +1332,9 @@ class TgLoop:
         messages stay on the InboundBuffer and land in the new session."""
         self._state.session_id = None
         self._session_created_at = None
+        if self._sessions is not None:
+            for cid in list(self._sessions.snapshot()):
+                self._sessions.forget(cid)
         self._persist_state()
         self._swap_provider(None, None)
         logger.info("shell respawn: fresh session")
