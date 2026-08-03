@@ -68,7 +68,7 @@ note_render_alert_after = 3
 shell_note_tag = "⏳ [NEW ROUND]"
 # Context occupancy at which the resident is asked to wrap up and is then
 # respawned fresh. 0 disables the fuse.
-fuse_tokens = 180000
+fuse_tokens = 300000
 fuse_tag = "⚙️ [FUSE]"
 # fuse_prompt_text = "..."
 # Visible context broadcast: one plain "🗃️ Context <N>k" line to the chat when

@@ -117,7 +117,7 @@ class TgConfig:
     shell_note_tag: str = "⏳ [NEW ROUND]"
     # Context occupancy at which the resident is asked to wrap up and is then
     # respawned fresh. 0 disables the fuse.
-    shell_fuse_tokens: int = 180000
+    shell_fuse_tokens: int = 300000
     shell_fuse_tag: str = "⚙️ [FUSE]"
     shell_fuse_prompt_text: str = (
         "Session context fused. Update handoff before rotate. Add todo if any. "
