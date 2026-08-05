@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
@@ -112,17 +111,18 @@ def stub_typing(monkeypatch):
     monkeypatch.setattr("synapse_tg.loop.TypingAction", _StubTyping)
 
 
+@pytest.fixture(autouse=True)
+def stub_split(monkeypatch):
+    monkeypatch.setattr(
+        "synapse_tg.loop.split_for_tg_typed",
+        lambda text: [{"kind": "text", "text": text}],
+    )
+    monkeypatch.setattr("synapse_tg.loop.gfm_to_tg_html", lambda t: t)
+
+
 def _loop(tmp_path, alerts=None):
     cfg = TgConfig(data_dir=tmp_path / "tg-data")
-    loop = TgLoop(cfg, alerts=alerts)
-    monkeypatch_split(loop)
-    return loop
-
-
-def monkeypatch_split(loop):
-    import synapse_tg.loop as mod
-    mod.split_for_tg_typed = lambda text: [{"kind": "text", "text": text}]
-    mod.gfm_to_tg_html = lambda t: t
+    return TgLoop(cfg, alerts=alerts)
 
 
 def test_idle_unsolicited_delivered_without_inbound(tmp_path):

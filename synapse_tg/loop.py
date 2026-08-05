@@ -64,6 +64,8 @@ _RETRY_AFTER_MARGIN_SEC = 0.5
 _LISTEN_POLL_TIMEOUT_SEC = 1.0
 _LISTEN_RELEASE_SLEEP_SEC = 0.25
 
+_QUOTE_TAG = re.compile(r"<quote>(.*?)</quote>\n?", re.DOTALL | re.IGNORECASE)
+
 # Marker the recv-drain thread puts after each turn's result so the async
 # consumer can tell turn boundaries apart across multiple back-to-back turns.
 _TURN_END = object()
@@ -1368,12 +1370,24 @@ class TgLoop:
                 time=datetime.fromtimestamp(wake, self._tz).strftime("%H:%M"))
         await self._emit_notice(bot, chat_id, text)
 
+    def _resolve_quote_target(self, fragment: str) -> int | None:
+        """Newest cached inbound message containing FRAGMENT, or None."""
+        if not fragment:
+            return None
+        for msg_id, msg_text in reversed(self._msg_id_cache.items()):
+            if fragment.lower() in msg_text.lower():
+                return msg_id
+        return None
+
     async def _deliver_reply(
         self, bot: Bot, chat_id: int, response: str, thinking: str
     ) -> None:
         """Send one completed turn (thinking blockquote + quote-tag resolution
         + split + media + retry/fallback). Shared by the solicited reply path
-        and unsolicited (background-task) turns so both deliver identically."""
+        and unsolicited (background-task) turns so both deliver identically.
+
+        Every <quote> tag is stripped; each one attaches as a real Telegram
+        reply on the first bubble of the text that follows it."""
         if not response and not thinking:
             return
 
@@ -1391,20 +1405,31 @@ class TgLoop:
         if not response:
             return
 
-        reply_to_id = None
-        quote_match = re.search(r"<quote>(.*?)</quote>", response, re.DOTALL)
-        if quote_match:
-            fragment = quote_match.group(1).strip()
-            response = (response[: quote_match.start()] + response[quote_match.end() :]).strip()
-            for msg_id, msg_text in reversed(self._msg_id_cache.items()):
-                if fragment.lower() in msg_text.lower():
-                    reply_to_id = msg_id
-                    break
+        reply_ids: dict[int, int] = {}
+        segments: list[tuple[int | None, str]] = []
+        pos = 0
+        quote_id: int | None = None
+        for match in _QUOTE_TAG.finditer(response):
+            segments.append((quote_id, response[pos : match.start()]))
+            quote_id = self._resolve_quote_target(match.group(1).strip())
+            pos = match.end()
 
-        bubbles = split_for_tg_typed(response)
+        if segments:
+            segments.append((quote_id, response[pos:]))
+            bubbles: list[dict[str, str]] = []
+            for seg_reply, seg_text in segments:
+                seg_bubbles = split_for_tg_typed(seg_text.strip())
+                if not seg_bubbles:
+                    continue
+                if seg_reply is not None:
+                    reply_ids[len(bubbles)] = seg_reply
+                bubbles.extend(seg_bubbles)
+        else:
+            bubbles = split_for_tg_typed(response)
 
         total = len(bubbles)
         for idx, bubble in enumerate(bubbles):
+            reply_to_id = reply_ids.get(idx)
             if bubble["kind"] == "text":
                 send_kwargs = dict(
                     chat_id=chat_id,
@@ -1415,7 +1440,6 @@ class TgLoop:
                 if reply_to_id is not None:
                     send_kwargs["reply_to_message_id"] = reply_to_id
                     fallback_kwargs["reply_to_message_id"] = reply_to_id
-                    reply_to_id = None
                 ok = await self._send_text_bubble(bot, send_kwargs, fallback_kwargs)
                 if not ok:
                     lost = total - idx
@@ -1448,8 +1472,6 @@ class TgLoop:
                         "send_media failed for bubble %d/%d (%s) — continuing",
                         idx + 1, total, bubble["kind"],
                     )
-                if reply_to_id is not None:
-                    reply_to_id = None
             await asyncio.sleep(_SEND_GAP_SEC)
         else:
             logger.info("reply delivered: %d bubble(s)", total)
