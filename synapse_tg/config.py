@@ -102,8 +102,8 @@ class TgConfig:
     shell_peer_fallback: str = "?"
     # Minutes of user silence before one rendered note turn is fed in.
     # Cross-repo contract: keep in step with cortex's [watchdog].silent_max_min
-    # (the cli shell's free-round cycle), also 20.
-    shell_idle_min: float = 20.0
+    # (the cli shell's free-round cycle), also 55.
+    shell_idle_min: float = 55.0
     # argv rendering the wakeup note on stdout, e.g.
     # ["/path/cortex/.venv/bin/python", "-m", "cortex.note_render"].
     # Empty = the silence cycle logs and skips every round.
