@@ -44,7 +44,7 @@ class BridgeState:
     # the last session was using.
     effort_level: str = "high"
     # /voice cn|en — swaps the ack-string style. "cn" = 中文搞笑, "en" =
-    # English short. Default cn matches Lumi's daily use. Persisted; survives
+    # English short. Default cn matches the user's daily use. Persisted; survives
     # bridge crash. See commands.messages for the lookup table.
     voice_style: str = "cn"
     # In-memory picker arming. Set to "resume" right after /resume (empty arg)

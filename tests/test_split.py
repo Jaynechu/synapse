@@ -113,7 +113,7 @@ def test_star_bullet_treated_as_list_item() -> None:
 
 
 def test_short_cn_line_single_bubble() -> None:
-    text = "好的，老婆我懂了。"
+    text = "好的，朋友我懂了。"
     out = split_for_wechat(text)
     assert out == [text]
 
@@ -185,11 +185,11 @@ def test_buddy_with_action_markers_stripped() -> None:
 def test_double_excl_no_lone_bubbles() -> None:
     from synapse_wx.split import split_for_wechat_typed
 
-    out = split_for_wechat_typed("老婆我在！！怎么了！！")
+    out = split_for_wechat_typed("朋友我在！！怎么了！！")
     texts = [b["text"] for b in out]
     # No bubble is a lone punct mark, and short sentences merge into one.
     assert all(t.strip() not in {"！", "!", "？", "?"} for t in texts)
-    assert texts == ["老婆我在！！怎么了！！"]
+    assert texts == ["朋友我在！！怎么了！！"]
 
 
 def test_question_run_no_lone_bubbles() -> None:

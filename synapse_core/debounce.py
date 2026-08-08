@@ -8,7 +8,7 @@ from collections.abc import Callable
 
 # Trailing hold marker: bubble ends with a "not done yet" signal — 3+ ascii
 # dots, 3+ CJK full stops, 1+ U+2026 (IME "……" is two), or full-width ～
-# (U+FF5E, Lumi's pick: one-tap on the CN mobile keyboard). Half-width ~ is
+# (U+FF5E, one-tap on the CN mobile keyboard). Half-width ~ is
 # deliberately excluded.
 _TRAILING_HOLD = re.compile(r"(?:\.{3,}|。{3,}|…+|～)$")
 

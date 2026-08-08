@@ -131,7 +131,7 @@ def test_resume_empty_arms_pending_picker() -> None:
     """After /resume with rows, the bare-digit reply should land on the picker.
 
     Without arming pending_picker, dispatch("5") would forward "5" to cc as
-    prose — that's the bug Lumi caught on phone (cc replied "好，5分钟。").
+    prose — that's the bug caught in the field (cc replied "好，5分钟。").
     """
     state = BridgeState()
     rows = [

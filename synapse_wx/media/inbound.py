@@ -64,7 +64,7 @@ _DEFAULT_SUFFIX = {
     "file": ".bin",
 }
 
-# kind → subfolder name. Capitalised + plural to match Lumi's hand-managed
+# kind → subfolder name. Capitalised + plural to match the user's hand-managed
 # layout (mirrors macOS ~/Pictures, ~/Documents style). "Transcripts" covers
 # both voice STT and video-frame STT, so voice items land there too.
 _KIND_DIRS = {

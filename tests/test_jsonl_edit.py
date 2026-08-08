@@ -426,7 +426,7 @@ def test_extract_user_text_list_content_concats_text_blocks() -> None:
 
 
 def test_extract_user_text_skips_tool_result_user_frames() -> None:
-    # tool_result user frames are NOT Lumi's prose; helper must return None.
+    # tool_result user frames are not user prose; helper must return None.
     ev = {
         "type": "user",
         "timestamp": "2026-06-02T10:00:00.000Z",

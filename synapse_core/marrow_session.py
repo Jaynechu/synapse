@@ -198,7 +198,7 @@ def jsonl_path_for_sid(cc_projects_dir: str | Path | None, sid: str) -> Path | N
 def fallback_model_from_jsonl(cc_projects_dir: str | Path | None, sid: str) -> str | None:
     """Grep the whole jsonl for ``"model":"claude-..."``; return the LAST match.
 
-    Lumi never mid-session swaps model, but cc's system/init event lives at
+    The user never mid-session swaps model, but cc's system/init event lives at
     the file START — a tail-only scan misses it on long sessions. Full-file
     last-match is correct for both new sessions and the (unused) swap case.
     """

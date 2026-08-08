@@ -1,6 +1,6 @@
 """UserPromptSubmit hook: tag every prompt with the current channel.
 
-Always emits `[channel: <name>]` so Stellan knows which surface Lumi is on.
+Always emits `[channel: <name>]` so the assistant knows which surface the user is on.
 Default channel is `cli` when `MARROW_CHANNEL` is unset (bridges set their
 own value before spawning cc; the cli has no env, so it falls back to cli).
 

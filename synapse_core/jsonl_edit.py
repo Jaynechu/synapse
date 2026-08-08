@@ -242,7 +242,7 @@ def extract_user_text(parsed: dict | None) -> str | None:
 
     cc stores prompts as either a string (`content: "hi"`) or a list of
     blocks (`content: [{"type":"text","text":"hi"}, ...]`). Tool_result
-    user frames are ignored — they are not Lumi's prose. Returns None
+    user frames are ignored — they are not user prose. Returns None
     when the event is not a real user prompt or has no text payload.
     """
     if not is_real_user_prompt(parsed):

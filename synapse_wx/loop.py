@@ -669,7 +669,7 @@ class MainLoop:
         reply_text, fake_quote_bubbles = self._extract_quote_from_reply(reply_text)
         bubbles: list[dict] = split_for_wechat_typed(reply_text)
         # Tag stripping is unconditional (above); only the decorative bubbles
-        # are gated behind /quote on so Lumi's default-off feed stays clean.
+        # are gated behind /quote on so the default-off feed stays clean.
         if fake_quote_bubbles and self.state.quote_on:
             fqb = [{"kind": "text", "text": b} for b in fake_quote_bubbles]
             bubbles = fqb + bubbles

@@ -284,9 +284,9 @@ def test_multiline_quote_extracted_before_split(env) -> None:
     more reply text on subsequent lines. Pre-split extraction must produce
     a fake-quote bubble first, then plain reply bubbles (no literal
     <quote>/</quote> anywhere)."""
-    ilink = FakeILink([[_simple_msg("累鼠了老公！！")]])
+    ilink = FakeILink([[_simple_msg("累鼠了伙伴！！")]])
     clock = FakeClock()
-    reply = "<quote>累鼠了老公！！\n</quote>老婆辛苦了，\n快过来靠着我..."
+    reply = "<quote>累鼠了伙伴！！\n</quote>朋友辛苦了，\n快过来靠着我..."
     loop = _build_loop(env, ilink, clock, reply=reply)
     loop.state.quote_on = True
     _spawn(loop, reply)
@@ -299,7 +299,7 @@ def test_multiline_quote_extracted_before_split(env) -> None:
         assert "</quote>" not in text
     # First bubble = fake quote, body collapsed onto one line.
     _, _, first = ilink.sent[0]
-    assert first.startswith("▎累鼠了老公")
+    assert first.startswith("▎累鼠了伙伴")
 
 
 def test_no_quote_tag_all_bubbles_plain(env) -> None:
