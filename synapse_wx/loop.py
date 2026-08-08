@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from synapse_core import cortex_kick, last_active
+from synapse_core import last_active
 from synapse_core.marrow_session import get_session_created_at, regen_suppress_path
 from synapse_core.alerts import AlertSink
 from synapse_core.anchor import quote_prefix, time_anchor
@@ -444,51 +444,6 @@ class MainLoop:
                     fingerprint="wx.outbox_orphan",
                 )
 
-    def _is_from_her(self, from_wxid: str | None) -> bool:
-        """Net-new sender-identity check: inbound from_wxid == [user].target_wxid.
-        Gates the watch/kick paths only."""
-        return bool(
-            self._cfg is not None
-            and self._cfg.target_wxid
-            and from_wxid
-            and from_wxid == self._cfg.target_wxid
-        )
-
-    def _inbound_from_her(self, text: str = "", media_type: str = "") -> None:
-        """Her message landed on wx -> claim any armed watches on wx (one kick).
-        Never raises; no-ops without kick_cmd. Reply path claims instantly. `text` =
-        her reply body (iLink already merges a caption into the same text item),
-        attached to the reply kick; `media_type` (e.g. "image") tags it as
-        "[<type>] <caption>" when present, or "[<type>]" alone for a caption-less
-        media turn — falls back to the config placeholder when the type is
-        unknown. wx has no native per-message timestamp (verified: absent from
-        the iLink payload, code and tests alike) so the F1 receipt bound uses
-        this poll tick's wallclock instead — sufficient because the bug is
-        same-poll-batch ordering, not exact send time."""
-        db = self._outbox_db()
-        kc = self._cfg.outbox_kick_cmd
-        caption = text.strip() if text else ""
-        if media_type:
-            kick_text = f"[{media_type}] {caption}" if caption else f"[{media_type}]"
-        elif caption:
-            kick_text = caption
-        else:
-            kick_text = self._cfg.outbox_kick_media_placeholder
-        inbound_at = self._wallclock().astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            if db:
-                cortex_kick.stamp_receipts(
-                    db, "wx", kick_text,
-                    text_chars=self._cfg.outbox_receipt_text_chars,
-                    inbound_at=inbound_at)
-            ids = cortex_kick.claim_reply(db, "wx") if db else []
-            if ids:
-                note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
-                cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
-                                 text_chars=self._cfg.outbox_kick_text_chars)
-        except Exception as e:
-            logger.warning("inbound-from-her kick failed: %s", e)
-
     def _outbox_scan(self) -> None:
         """Claim pending wx rows and deliver via ILink.send_text. Folded into
         tick() so it fires only after a poll-ok (same guarantee as the restart
@@ -502,16 +457,6 @@ class MainLoop:
         if now - self._last_outbox_scan_ts < self._cfg.outbox_poll_interval_s:
             return
         self._last_outbox_scan_ts = now
-        # P6 watch_timeout: sent+armed rows past their timeout with no reply in
-        # events -> claim (armed->fired) + one kick each. Single-row UPDATE
-        # resolves any race with a concurrent reply claim (one winner).
-        try:
-            for w in cortex_kick.claim_timeouts(db, "wx"):
-                cortex_kick.kick(
-                    self._cfg.outbox_kick_cmd, "timeout",
-                    note_id=w["id"], minutes=w["minutes"])
-        except Exception as e:
-            logger.warning("watch_timeout kick failed: %s", e)
         rows = outbox.claim_pending(db)
         prefix = self._cfg.outbox_note_prefix
         for row in rows:
@@ -600,9 +545,7 @@ class MainLoop:
                 logger.warning("extract_text failed: %s", e)
                 text = ""
             # C0: surface media events alongside text so a pure-media bubble
-            # (e.g. just a photo, no caption) still triggers a turn. Extracted
-            # ahead of the inbound-from-her call below so the receipt/kick
-            # text can carry a media-type tag (F2), not just the bare caption.
+            # (e.g. just a photo, no caption) still triggers a turn.
             media_events: list[dict] = []
             extract_media = getattr(self._ilink, "extract_media", None)
             if extract_media is not None:
@@ -611,12 +554,6 @@ class MainLoop:
                 except Exception as e:
                     logger.warning("extract_media failed: %s", e)
                     media_events = []
-            # P6: inbound from her (from_wxid == target) drives watch-reply +
-            # morning flag-pull kicks. Any other sender is ignored here. Her
-            # reply text rides the reply kick (extracted above; "" for media).
-            if self._is_from_her(from_wxid):
-                media_type = media_events[0].get("type", "") if media_events else ""
-                self._inbound_from_her(text, media_type=media_type)
             if not text and not media_events:
                 continue
             # E-polish quote (inbound): iLink may carry a `reference` field on

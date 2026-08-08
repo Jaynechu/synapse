@@ -1,7 +1,7 @@
 """Only a message the registry forwards to the LLM counts as user activity on
 tg: anything dispatch swallows (known command, typo slash, bare alias, picker
 digit) must leave the shell's silence window and any booked wake untouched,
-while the rest of _track (bot/chat tracking, watch-reply kick) still runs.
+while the rest of _track (bot/chat tracking) still runs.
 
 Every boundary is mocked: no cc spawn, no telegram bot, no real clock.
 """
@@ -49,15 +49,6 @@ class _NoSpawnProvider:
 @pytest.fixture(autouse=True)
 def stub_provider(monkeypatch):
     monkeypatch.setattr("synapse_tg.loop.ClaudeCodeProvider", _NoSpawnProvider)
-
-
-@pytest.fixture(autouse=True)
-def stub_kick(monkeypatch):
-    """The watch-reply kick shells out; tests that assert on it re-patch."""
-    monkeypatch.setattr(
-        TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": None,
-    )
 
 
 class _ShellSpy:
@@ -141,19 +132,6 @@ async def test_forwarded_text_counts_as_activity(tmp_path: Path, text: str) -> N
     await loop.on_message(update, _FakeCtx(_FakeBot()))
 
     assert shell.calls == 1
-
-
-async def test_watch_reply_kick_still_fires_for_a_command(tmp_path: Path, monkeypatch) -> None:
-    loop, shell = _build_loop(tmp_path)
-    kicks: list[str] = []
-    monkeypatch.setattr(
-        TgLoop, "_inbound_from_her",
-        lambda self, text="", msg_date=None, media_type="": kicks.append(text),
-    )
-    await loop.on_message(_FakeUpdate(_FakeMessage("/info")), _FakeCtx(_FakeBot()))
-
-    assert shell.calls == 0
-    assert kicks == ["/info"]
 
 
 async def test_photo_handler_still_resets_idle(tmp_path: Path, monkeypatch) -> None:

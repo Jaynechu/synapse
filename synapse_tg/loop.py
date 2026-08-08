@@ -39,7 +39,6 @@ from .media.inbound import (
     materialize_sticker,
     materialize_video,
 )
-from synapse_core import cortex_kick
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
 from . import outbox
@@ -947,16 +946,6 @@ class TgLoop:
         db = self._outbox_db()
         if not db:
             return
-        # P6 watch_timeout: sent+armed rows past their timeout with no reply in
-        # events -> claim (armed->fired) + one kick each. Single-row UPDATE
-        # resolves any race with a concurrent reply claim (one winner).
-        try:
-            for w in cortex_kick.claim_timeouts(db, "tg"):
-                cortex_kick.kick(
-                    self._cfg.outbox_kick_cmd, "timeout",
-                    note_id=w["id"], minutes=w["minutes"])
-        except Exception as e:
-            logger.warning("watch_timeout kick failed: %s", e)
         rows = outbox.claim_pending(db)
         if not rows:
             return
@@ -1002,9 +991,7 @@ class TgLoop:
         outbox.mark_sent(db, row_id)
         logger.info("outbox row #%d delivered", row_id)
 
-    def _track(self, bot: Bot, chat_id: int,
-               text: str = "", msg_date: datetime | None = None,
-               media_type: str = "", count_activity: bool = True) -> None:
+    def _track(self, bot: Bot, chat_id: int, count_activity: bool = True) -> None:
         self._bot = bot
         self._pending_chat_id = chat_id
         # An inbound message restarts the cortex shell's silence cycle and
@@ -1014,58 +1001,6 @@ class TgLoop:
         # Media turns always count.
         if count_activity and self._shell is not None:
             self._shell.on_user_message()
-        # P6: inbound from the authorized recipient drives watch-reply kicks.
-        # Any other chat is ignored here. `text` = the reply body, threaded into
-        # the reply kick so the wakeup note shows WHAT was said (empty for
-        # media-only turns). `msg_date` = Telegram's native message timestamp,
-        # bounding the receipt stamp to notes sent at/before this message (F1).
-        # `media_type` tags a media-only turn (e.g. "photo").
-        if self._is_from_her(chat_id):
-            self._inbound_from_her(text, msg_date=msg_date, media_type=media_type)
-
-    def _is_from_her(self, chat_id: int | None) -> bool:
-        """Net-new sender-identity check: inbound chat_id == the authorized
-        [tg].chat_id. Gates the watch/kick paths only."""
-        return (
-            self._cfg.chat_id is not None
-            and chat_id is not None
-            and int(chat_id) == int(self._cfg.chat_id)
-        )
-
-    def _inbound_from_her(self, text: str = "", msg_date: datetime | None = None,
-                          media_type: str = "") -> None:
-        """Her message landed on tg -> claim any armed watches on tg (one kick).
-        Never raises; no-ops without kick_cmd. Reply path claims instantly (no
-        other DB query). `text` = her reply body, attached to the reply kick; a
-        media-only reply (no extractable text) substitutes "[<media_type>]" (or
-        the config placeholder when the type is unknown) so the reason line
-        never renders an empty quote. `msg_date` bounds the receipt stamp to
-        notes sent at/before this message (F1: same-poll-batch false stamp)."""
-        db = self._outbox_db()
-        kc = self._cfg.outbox_kick_cmd
-        caption = text.strip() if text else ""
-        if media_type:
-            kick_text = f"[{media_type}] {caption}" if caption else f"[{media_type}]"
-        elif caption:
-            kick_text = caption
-        else:
-            kick_text = self._cfg.outbox_kick_media_placeholder
-        inbound_at = None
-        if msg_date is not None:
-            inbound_at = msg_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            if db:
-                cortex_kick.stamp_receipts(
-                    db, "tg", kick_text,
-                    text_chars=self._cfg.outbox_receipt_text_chars,
-                    inbound_at=inbound_at)
-            ids = cortex_kick.claim_reply(db, "tg") if db else []
-            if ids:
-                note_id = ids[0] if len(ids) == 1 else ",".join(str(i) for i in ids)
-                cortex_kick.kick(kc, "reply", note_id=note_id, text=kick_text,
-                                 text_chars=self._cfg.outbox_kick_text_chars)
-        except Exception as e:
-            logger.warning("inbound-from-her kick failed: %s", e)
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.message.text is None:
@@ -1079,8 +1014,7 @@ class TgLoop:
         # synchronous, so no other task can observe the gap.
         action, ack = self._registry.dispatch(text)
         inject = self._registry.pending_rewrite
-        self._track(context.bot, update.message.chat_id, text=text,
-                     msg_date=update.message.date,
+        self._track(context.bot, update.message.chat_id,
                      count_activity=(action == "forward" or bool(inject)))
 
         if action == "handled":
@@ -1114,9 +1048,7 @@ class TgLoop:
     async def on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.photo:
             return
-        self._track(context.bot, update.message.chat_id,
-                     text=update.message.caption or "",
-                     msg_date=update.message.date, media_type="photo")
+        self._track(context.bot, update.message.chat_id)
         paths = await materialize_photo(context.bot, update.message, self._cfg.data_dir)
         if paths:
             instruction = build_read_instruction(paths)
@@ -1128,9 +1060,7 @@ class TgLoop:
     async def on_animation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.animation:
             return
-        self._track(context.bot, update.message.chat_id,
-                     text=update.message.caption or "",
-                     msg_date=update.message.date, media_type="animation")
+        self._track(context.bot, update.message.chat_id)
         path = await materialize_animation(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
@@ -1142,9 +1072,7 @@ class TgLoop:
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.document:
             return
-        self._track(context.bot, update.message.chat_id,
-                     text=update.message.caption or "",
-                     msg_date=update.message.date, media_type="document")
+        self._track(context.bot, update.message.chat_id)
         path = await materialize_document(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
@@ -1156,8 +1084,7 @@ class TgLoop:
     async def on_sticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.sticker:
             return
-        self._track(context.bot, update.message.chat_id,
-                     msg_date=update.message.date, media_type="sticker")
+        self._track(context.bot, update.message.chat_id)
         path = await materialize_sticker(context.bot, update.message, self._cfg.data_dir)
         if path:
             stk = update.message.sticker
@@ -1169,9 +1096,7 @@ class TgLoop:
     async def on_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.video:
             return
-        self._track(context.bot, update.message.chat_id,
-                     text=update.message.caption or "",
-                     msg_date=update.message.date, media_type="video")
+        self._track(context.bot, update.message.chat_id)
         path = await materialize_video(context.bot, update.message, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])

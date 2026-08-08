@@ -73,12 +73,9 @@ class TgConfig:
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
-    # Watch + kick (P6). kick_cmd = cortex.kick launcher (venv python + module),
-    # e.g. ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = watch/kick off.
+    # kick_cmd = cortex.kick launcher (venv python + module), e.g.
+    # ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = kick off.
     outbox_kick_cmd: list = field(default_factory=list)
-    outbox_kick_text_chars: int = 200
-    outbox_receipt_text_chars: int = 120
-    outbox_kick_media_placeholder: str = "[media]"
     # Marks a delivered note as bridge-sent (vs the resident session's own
     # chat), so her phone can tell them apart at a glance. Empty disables.
     outbox_note_prefix: str = "\U0001f4ee "
@@ -229,15 +226,6 @@ def load_config(path: Path | None = None) -> TgConfig:
             cfg.outbox_kick_cmd = [str(x) for x in kc]
         elif isinstance(kc, str) and kc.strip():
             cfg.outbox_kick_cmd = kc
-        ktc = outbox.get("kick_text_chars")
-        if isinstance(ktc, int) and not isinstance(ktc, bool) and ktc > 0:
-            cfg.outbox_kick_text_chars = ktc
-        rtc = outbox.get("receipt_text_chars")
-        if isinstance(rtc, int) and not isinstance(rtc, bool) and rtc > 0:
-            cfg.outbox_receipt_text_chars = rtc
-        kmp = outbox.get("kick_media_placeholder")
-        if isinstance(kmp, str) and kmp.strip():
-            cfg.outbox_kick_media_placeholder = kmp
         if "note_prefix" in outbox and isinstance(outbox["note_prefix"], str):
             cfg.outbox_note_prefix = outbox["note_prefix"]
 

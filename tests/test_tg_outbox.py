@@ -23,10 +23,7 @@ CREATE TABLE outbox (
   body TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   sent_at TEXT,
-  retry_count INTEGER NOT NULL DEFAULT 0,
-  watch_reply INTEGER NOT NULL DEFAULT 0,
-  watch_timeout_min INTEGER,
-  watch_state TEXT
+  retry_count INTEGER NOT NULL DEFAULT 0
 );
 """
 
