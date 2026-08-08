@@ -1498,7 +1498,10 @@ def test_silence_round_reaches_tg_without_any_inbound_message(tmp_path):
 def test_a_wired_turn_writes_the_ledger(tmp_path):
     clock = Clock()
     host, loop, _bot = _wired(tmp_path, clock)
-    assert not shell_state.state_path(tmp_path / "shells", "tg").exists()
+    # Construction adopts the breaker marker and nothing else — none of the
+    # turn keys exist until a round has actually run.
+    assert set(shell_state.read(tmp_path / "shells", "tg")) <= {
+        "breaker_announced_ts"}
 
     async def run():
         host._arm()

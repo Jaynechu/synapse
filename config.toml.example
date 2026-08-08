@@ -7,16 +7,9 @@
 token = ""
 
 [tg]
-# Authorized recipient chat id for outbound notes (cross-channel drop).
-# REQUIRED for the outbox feature — without it, note delivery is disabled.
+# Chat the bridge sends to on its own initiative (breaker notices, context
+# broadcasts, cortex shell rounds). Without it those are silently dropped.
 # chat_id = 123456789
-
-[outbox]
-# Bridge scan cadence for pending outbox notes (seconds).
-poll_interval_s = 5
-# Inline send-call retries per bubble before the row is marked failed.
-# NOT whole-row redelivery: a crash-orphan claimed row is failed, never resent.
-retry_max = 3
 
 # ── Cortex shell (tg) ─────────────────────────────────
 # Active iff shell_enabled AND shell_id below is a member of marrow's

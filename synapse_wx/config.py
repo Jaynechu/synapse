@@ -76,15 +76,6 @@ class Config:
     # date (inclusive, "YYYY-MM-DD"). Empty = off. Auto-expires after the date.
     raw_poll_log_until: str = ""
 
-    # Outbox (cross-channel note delivery). Feature no-ops without target_wxid.
-    # poll folds into MainLoop.tick; retry_max counts send_text CALLS (send_text
-    # chunks + retries internally — no stacked retry on top).
-    outbox_poll_interval_s: float = 5.0
-    outbox_retry_max: int = 3
-
-    # Marks a delivered note as bridge-sent (vs the resident session's own
-    # chat), so her phone can tell them apart at a glance. Empty disables.
-    outbox_note_prefix: str = "\U0001f4ee "
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
@@ -143,16 +134,6 @@ def load_config(path: Path | None = None) -> Config:
         val = debug["raw_poll_log_until"]
         if isinstance(val, str):
             cfg.raw_poll_log_until = val
-    outbox = data.get("outbox") or {}
-    if isinstance(outbox, dict):
-        pi = outbox.get("poll_interval_s")
-        if isinstance(pi, (int, float)) and not isinstance(pi, bool) and pi > 0:
-            cfg.outbox_poll_interval_s = float(pi)
-        rm = outbox.get("retry_max")
-        if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
-            cfg.outbox_retry_max = rm
-        if "note_prefix" in outbox and isinstance(outbox["note_prefix"], str):
-            cfg.outbox_note_prefix = outbox["note_prefix"]
     core = data.get("core") or {}
     if isinstance(core, dict) and isinstance(core.get("timezone"), str):
         cfg.timezone = core["timezone"]

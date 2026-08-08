@@ -233,6 +233,20 @@ def record_fuse(config_dir: str | os.PathLike[str], shell: str, *,
     return len(events)
 
 
+def fuse_count(config_dir: str | os.PathLike[str], *,
+               now: datetime | None = None) -> int:
+    """Fuse events still inside the rolling window, WITHOUT recording one. The
+    pruned tally is not written back — this is the read a trip announcement
+    needs to fill trip_message's {count} when the trip was written by the other
+    shell. Absent/unreadable tally -> 0."""
+    cfg = settings(config_dir)
+    now = now or datetime.now().astimezone()
+    cutoff = now - timedelta(hours=float(cfg["window_hours"]))
+    data = _read_json(fuse_path(config_dir), {})
+    events = data.get("events")
+    return len(_prune(events if isinstance(events, list) else [], cutoff))
+
+
 def record_fuse_and_maybe_trip(config_dir: str | os.PathLike[str], shell: str, *,
                                now: datetime | None = None) -> tuple[int, dict | None]:
     """Record a fuse, then trip the breaker (scope=all, reason=auto_fuse) when

@@ -63,19 +63,14 @@ class TgConfig:
     http_write_timeout_s: float = 30.0
     http_pool_timeout_s: float = 10.0
 
-    # Outbox (cross-channel note delivery). Feature no-ops without chat_id.
+    # Target chat for anything the bridge sends on its own initiative.
     chat_id: int | None = None
-    outbox_poll_interval_s: float = 5.0
-    outbox_retry_max: int = 3
 
     # Inbound sender whitelist (by Telegram user id). Empty = accept-all (open
     # door, logged loudly at startup). Explicit allowed_user_ids wins over the
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
-    # Marks a delivered note as bridge-sent (vs the resident session's own
-    # chat), so her phone can tell them apart at a glance. Empty disables.
-    outbox_note_prefix: str = "\U0001f4ee "
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
@@ -209,17 +204,6 @@ def load_config(path: Path | None = None) -> TgConfig:
             cfg.allowed_user_ids = [
                 x for x in aui if isinstance(x, int) and not isinstance(x, bool)
             ]
-
-    outbox = data.get("outbox") or {}
-    if isinstance(outbox, dict):
-        pi = outbox.get("poll_interval_s")
-        if isinstance(pi, (int, float)) and not isinstance(pi, bool) and pi > 0:
-            cfg.outbox_poll_interval_s = float(pi)
-        rm = outbox.get("retry_max")
-        if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
-            cfg.outbox_retry_max = rm
-        if "note_prefix" in outbox and isinstance(outbox["note_prefix"], str):
-            cfg.outbox_note_prefix = outbox["note_prefix"]
 
     cortex = data.get("cortex") or {}
     if isinstance(cortex, dict):

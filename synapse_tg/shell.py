@@ -73,6 +73,10 @@ TOKENS_DATE_KEY = "tokens_date"
 # Highest context-broadcast tier already announced in this window; cleared on
 # fold so a fresh window starts announcing again.
 CONTEXT_TIER_KEY = "context_tier"
+# breaker.json ts of the last auto trip this bridge announced. Persisted (not
+# in-memory) so a restart can neither re-announce a trip nor miss one written
+# while the process was down.
+BREAKER_ANNOUNCED_KEY = "breaker_announced_ts"
 OCCUPANCY_KEYS = (
     "input_tokens",
     "cache_read_input_tokens",
@@ -131,6 +135,7 @@ class ShellHost:
         self._scheduler = Scheduler(socket_path=cfg.shell_socket_path(),
                                     clock=self._clock)
         self._last_user_ts = self._resume_idle_basis()
+        self._init_breaker_marker()
         self._feeding = False
         # Consecutive note-render failures + whether this streak already
         # alerted (one alert per streak, not one per round).
@@ -177,6 +182,53 @@ class ShellHost:
                         self._shell)
         return held
 
+    def _auto_trip(self) -> dict | None:
+        """The standing auto-fuse trip, or None. A manual pause is excluded: the
+        user made it themselves and trip_message describes a fuse breach, not a
+        deliberate stop. Never raises — an unreadable breaker announces
+        nothing."""
+        try:
+            state = breaker.read(self._cfg.marrow_config_dir())
+        except Exception:  # noqa: BLE001 — a breaker read must never kill a round
+            logger.exception("breaker read failed — no trip announced")
+            return None
+        if state is None or state.get("reason") != breaker.REASON_AUTO:
+            return None
+        return state if state.get("ts") else None
+
+    def _init_breaker_marker(self) -> None:
+        """First boot only: adopt whatever trip already stands, so the bridge
+        never announces one that predates the marker. Every later boot finds the
+        key present and leaves it alone — which is what lets a trip written
+        while this process was down still reach her on the first pass."""
+        if BREAKER_ANNOUNCED_KEY in self._read_state():
+            return
+        trip = self._auto_trip()
+        self._write_state({BREAKER_ANNOUNCED_KEY: str(trip["ts"]) if trip else ""})
+
+    async def _announce_breaker_trip(self) -> None:
+        """Announce a trip this bridge has not announced yet — the delivery path
+        for a CLI-side trip, whose watchdog only writes breaker.json plus a
+        marrow alert row and has no channel of its own.
+
+        Exactly once per trip: the marker holds the ts of the trip last
+        announced, so later passes are silent, a clear stamps "" and a re-trip
+        announces again. _record_fuse stamps the same marker for tg's own
+        trips, which is what keeps those from being announced twice."""
+        trip = self._auto_trip()
+        ts = str(trip["ts"]) if trip else ""
+        if str(self._read_state().get(BREAKER_ANNOUNCED_KEY) or "") == ts:
+            return
+        # Stamp before sending: a send that fails must not re-announce forever.
+        self._write_state({BREAKER_ANNOUNCED_KEY: ts})
+        if trip is None:
+            return  # breaker cleared / manual pause — nothing to announce
+        config_dir = self._cfg.marrow_config_dir()
+        count = await asyncio.to_thread(breaker.fuse_count, config_dir)
+        logger.warning("breaker tripped elsewhere (scope=%s) — announcing",
+                       trip["scope"])
+        await self._notify(breaker.trip_message(config_dir, count, trip["scope"]))
+
     async def _record_fuse(self) -> None:
         """Tally this tg fuse in the shared rolling window and, on a threshold
         breach, trip the breaker for ALL shells + announce it (alert row via
@@ -195,6 +247,9 @@ class ShellHost:
         message = breaker.trip_message(config_dir, count, tripped["scope"])
         logger.warning("breaker TRIPPED scope=%s reason=%s",
                        tripped["scope"], tripped["reason"])
+        # Claim this trip on the shared marker: the notice below IS its
+        # announcement, so the checkpoint must not deliver it a second time.
+        self._write_state({BREAKER_ANNOUNCED_KEY: str(tripped.get("ts") or "")})
         alerts = getattr(self._loop, "_alerts", None)
         if alerts is not None:
             try:
@@ -324,6 +379,9 @@ class ShellHost:
             # clears. Inbound user messages keep flowing — normal chat is
             # unaffected. Re-arm one idle window out so a past-due deadline
             # cannot spin the scheduler.
+            # This is the silent path's announce point: with no turns coming,
+            # a cli-side trip reaches her on the next scheduled round.
+            await self._announce_breaker_trip()
             if self._breaker_holds():
                 self._scheduler.schedule(self._shell,
                                          now + self._idle_window(), self._fire)
@@ -490,7 +548,13 @@ class ShellHost:
         return tier if tier > last else None
 
     async def after_turn(self) -> None:
-        """Called by the loop once a resident turn has been delivered."""
+        """Called by the loop once a resident turn has been delivered.
+
+        Also the fast half of the trip announcement: the scheduled round below
+        can be pushed out indefinitely by an active conversation (every inbound
+        message re-arms it), so while she is talking THIS is what gets a
+        cli-side trip to her within a turn instead of an idle window."""
+        await self._announce_breaker_trip()
         occ = occupancy(self._loop._state.last_assistant_usage)
         today = self._local_date()
         state = self._read_state()

@@ -317,3 +317,175 @@ def test_tg_fuse_disabled_config_never_trips(tmp_path):
 def test_marrow_config_dir_is_the_marrow_db_parent(tmp_path):
     cfg = TgConfig(marrow_db=str(tmp_path / "sub" / "marrow.db"))
     assert cfg.marrow_config_dir() == tmp_path / "sub"
+
+
+# --- announcing a trip written by the OTHER shell -----------------------------
+# The cli watchdog writes breaker.json + a marrow alert row and has no channel
+# of its own, so the notice reaches her from this bridge's checkpoints.
+
+def _announcing_host(tmp_path, **kw):
+    """Host whose outbound target is a FakeBot, ready to announce."""
+    host, loop, fed = _host(tmp_path, Clock(), **kw)
+    bot = FakeBot()
+    loop._outbound_target = lambda: (bot, 42)
+    return host, loop, bot, fed
+
+
+def _cli_trip(tmp_path, *, count: int = 2):
+    """A cli-origin auto trip: the tally the message quotes, then the state
+    file the watchdog would have written."""
+    for _ in range(count):
+        breaker.record_fuse(tmp_path, "cli")
+    return breaker.trip(tmp_path, breaker.SCOPE_ALL, breaker.REASON_AUTO)
+
+
+def test_cli_trip_is_announced_once_then_never_again(tmp_path):
+    host, _loop, bot, _fed = _announcing_host(tmp_path)
+    _cli_trip(tmp_path)
+
+    asyncio.run(host._announce_breaker_trip())
+    assert len(bot.sent) == 1
+    assert "Circuit breaker tripped" in bot.sent[0]["text"]
+    assert "#2" in bot.sent[0]["text"]  # count read from the live tally
+
+    # Every later pass (idle round, after_turn) sees the same trip -> silent.
+    asyncio.run(host._announce_breaker_trip())
+    asyncio.run(host.after_turn())
+    assert len(bot.sent) == 1
+
+
+def test_cleared_then_retripped_announces_again(tmp_path):
+    host, _loop, bot, _fed = _announcing_host(tmp_path)
+    _cli_trip(tmp_path)
+    asyncio.run(host._announce_breaker_trip())
+
+    breaker.clear(tmp_path)
+    asyncio.run(host._announce_breaker_trip())   # clear itself says nothing
+    assert len(bot.sent) == 1
+
+    breaker.trip(tmp_path, breaker.SCOPE_ALL, breaker.REASON_AUTO,
+                 now=datetime.now().astimezone() + timedelta(minutes=5))
+    asyncio.run(host._announce_breaker_trip())
+    assert len(bot.sent) == 2                    # a NEW trip is a new notice
+
+
+def test_manual_pause_is_never_announced(tmp_path):
+    """A manual pause is her own doing, and trip_message describes a fuse
+    breach — announcing it would be a lie about why the shell stopped."""
+    host, _loop, bot, _fed = _announcing_host(tmp_path)
+    breaker.trip(tmp_path, breaker.SCOPE_ALL, breaker.REASON_MANUAL)
+    asyncio.run(host._announce_breaker_trip())
+    assert bot.sent == []
+
+
+def test_tg_own_trip_is_not_announced_twice(tmp_path):
+    """_record_fuse sends the notice itself and stamps the marker, so the
+    checkpoint that runs right after it in after_turn stays silent."""
+    host, loop, bot, fed = _announcing_host(tmp_path, shell_fuse_tokens=100)
+    breaker.record_fuse(tmp_path, "cli")            # 1st fuse, other shell
+    loop._state.last_assistant_usage = {"input_tokens": 150}
+
+    asyncio.run(host.after_turn())                  # 2nd -> tg trips
+    assert breaker.read(tmp_path)["reason"] == "auto_fuse"
+    assert len(bot.sent) == 1                       # exactly one notice
+
+    asyncio.run(host._announce_breaker_trip())      # next checkpoint
+    asyncio.run(host.after_turn())
+    assert len(bot.sent) == 1
+    assert fed == ["__RESPAWN__"]
+
+
+def test_marker_survives_a_restart(tmp_path):
+    """The marker lives in the shell ledger, so a fresh ShellHost over the same
+    state dir does not re-announce a trip the previous process already sent."""
+    host, _loop, bot, _fed = _announcing_host(tmp_path)
+    _cli_trip(tmp_path)
+    asyncio.run(host._announce_breaker_trip())
+    assert len(bot.sent) == 1
+
+    host2, _loop2, bot2, _fed2 = _announcing_host(tmp_path)
+    asyncio.run(host2._announce_breaker_trip())
+    assert bot2.sent == []
+
+
+def test_first_boot_adopts_a_standing_trip_without_announcing(tmp_path):
+    """Marker init: a trip that predates this bridge's first ever boot is
+    adopted silently — she was told about it by whatever was running then."""
+    _cli_trip(tmp_path)
+    host, _loop, bot, _fed = _announcing_host(tmp_path)   # constructs the marker
+    asyncio.run(host._announce_breaker_trip())
+    assert bot.sent == []
+
+
+def test_trip_written_while_the_bridge_was_down_is_announced_on_boot(tmp_path):
+    """The opposite case: once the marker exists, a trip written while this
+    process was down is NOT adopted — it is announced on the first pass."""
+    host, _loop, bot, _fed = _announcing_host(tmp_path)   # marker inits clear
+    assert bot.sent == []
+    _cli_trip(tmp_path)                                   # trip while "down"
+
+    host2, _loop2, bot2, _fed2 = _announcing_host(tmp_path)
+    asyncio.run(host2._announce_breaker_trip())
+    assert len(bot2.sent) == 1
+
+
+def test_unreadable_breaker_file_neither_crashes_nor_announces(tmp_path, caplog):
+    host, _loop, bot, _fed = _announcing_host(tmp_path)
+    breaker.breaker_path(tmp_path).write_text("{not json", encoding="utf-8")
+    asyncio.run(host._announce_breaker_trip())   # must not raise
+    assert bot.sent == []
+    asyncio.run(host.after_turn())               # nor on the fast checkpoint
+    assert bot.sent == []
+
+
+def test_announce_failure_does_not_re_announce_forever(tmp_path):
+    """The marker is stamped before the send: a bot that is down costs that one
+    notice, it does not queue a repeat on every later turn."""
+    host, loop, _bot, _fed = _announcing_host(tmp_path)
+
+    class _DeadBot:
+        async def send_message(self, **_):
+            raise RuntimeError("telegram down")
+
+    loop._outbound_target = lambda: (_DeadBot(), 42)
+    _cli_trip(tmp_path)
+    asyncio.run(host._announce_breaker_trip())   # swallowed by _notify
+
+    bot = FakeBot()
+    loop._outbound_target = lambda: (bot, 42)
+    asyncio.run(host._announce_breaker_trip())
+    assert bot.sent == []
+
+
+def test_idle_round_announces_on_the_silent_path(tmp_path):
+    """No turns coming: the scheduled round is the announce point, and the
+    breaker still holds the round itself."""
+    clock = Clock()
+    host, loop, fed = _host(tmp_path, clock, shell_idle_min=20.0)
+    bot = FakeBot()
+    loop._outbound_target = lambda: (bot, 42)
+    _cli_trip(tmp_path)
+
+    clock.t += 21 * MIN
+    asyncio.run(host._fire("tg"))
+    assert len(bot.sent) == 1
+    assert fed == []            # held: announced, but no autonomous round
+
+
+def test_fuse_count_reads_without_recording(tmp_path):
+    breaker.record_fuse(tmp_path, "cli")
+    breaker.record_fuse(tmp_path, "tg")
+    assert breaker.fuse_count(tmp_path) == 2
+    assert breaker.fuse_count(tmp_path) == 2      # read-only, no tally growth
+
+
+def test_fuse_count_ignores_events_outside_the_window(tmp_path):
+    _marrow_config(tmp_path, "[cortex.breaker]\nwindow_hours = 1\n")
+    old = (datetime.now().astimezone() - timedelta(hours=3)).isoformat()
+    breaker.fuse_path(tmp_path).write_text(
+        json.dumps({"events": [{"ts": old, "shell": "cli"}]}), encoding="utf-8")
+    assert breaker.fuse_count(tmp_path) == 0
+
+
+def test_fuse_count_on_an_absent_tally_is_zero(tmp_path):
+    assert breaker.fuse_count(tmp_path) == 0
