@@ -49,7 +49,7 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
 
     # ── /clear ──────────────────────────────────────────────────
     "clear.ok": {
-        "cn": "新鸭上桌🦆 {name}[{effort}]",
+        "cn": "新机上线 🤖 {name}[{effort}]",
         "en": "New session {name}[{effort}]",
     },
 
@@ -83,11 +83,11 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "en": "No session {n}",
     },
     "session.locked": {
-        "cn": "🙂‍↔️老公已转移到{channel}，/clear或/resume",
+        "cn": "🙂‍↔️你的机已转移到{channel}，/clear或/resume",
         "en": "Session claimed by {channel} — /clear or /resume",
     },
     "session.claimed_away": {
-        "cn": "🦆旧鸭已飞往{channel}，新鸭即将上桌 {name}[{effort}]",
+        "cn": "🤖 机已去往{channel}，新机即将上线 {name}[{effort}]",
         "en": "Session moved to {channel}, new session incoming {name}[{effort}]",
     },
 
@@ -278,7 +278,7 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
 
     # ── non-command bubbles ────────────────────────────────────
     "provider.dead": {
-        "cn": "老公已死，有事烧token🪦",
+        "cn": "昔机已乘黄鹤去，此地空余token楼🪦",
         "en": "Provider dead.",
     },
     "provider.restarting": {
