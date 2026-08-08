@@ -49,12 +49,22 @@ def _acquire_singleton_lock(path: Path) -> int:
 
 def _whitelist_filter(cfg) -> "filters.BaseFilter | None":
     """Build the sender gate from the effective whitelist (by Telegram user
-    id, so an allowed sender is recognised in a group too). None = accept-all
-    (caller must log a startup warning)."""
+    id, so an allowed sender is recognised in a group too). When group_ids is
+    non-empty the gate also admits any member of those groups; private messages
+    still require the user whitelist. None = accept-all (caller must log a
+    startup warning)."""
     ids = cfg.effective_allowed_user_ids()
-    if not ids:
+    user_filter = filters.User(user_id=set(ids)) if ids else None
+    group_filter = (
+        filters.Chat(chat_id=set(cfg.group_ids)) if cfg.group_ids else None
+    )
+    if user_filter is None and group_filter is None:
         return None
-    return filters.User(user_id=set(ids))
+    if user_filter is None:
+        return group_filter
+    if group_filter is None:
+        return user_filter
+    return user_filter | group_filter
 
 
 def main() -> int:

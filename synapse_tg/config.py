@@ -71,6 +71,15 @@ class TgConfig:
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
+    # Group chat access. group_ids: Telegram chat ids (negative ints for groups)
+    # whose members may reach the bot. Empty = no group access (default).
+    # group_mention_keywords: bot responds only when one of these strings
+    # appears in the message text/caption (case-insensitive), OR the bot is
+    # @-mentioned, OR the message replies to one of the bot's own messages.
+    group_ids: list = field(default_factory=list)
+    group_mention_keywords: list = field(default_factory=list)
+
+
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
@@ -125,6 +134,12 @@ class TgConfig:
 
     # Ack string overrides from [ack_overrides] — key -> {style -> template}
     ack_overrides: dict = field(default_factory=dict)
+
+    # Bark push notifications ([bark] section). Disabled unless bark_push_url set.
+    bark_push_url: str = ""
+    bark_icon: str = ""
+    bark_max_chars: int = 150
+
 
     def shell_socket_path(self) -> Path:
         return Path(self.shell_socket).expanduser()
@@ -203,6 +218,16 @@ def load_config(path: Path | None = None) -> TgConfig:
         if isinstance(aui, list):
             cfg.allowed_user_ids = [
                 x for x in aui if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gids = tg.get("group_ids")
+        if isinstance(gids, list):
+            cfg.group_ids = [
+                x for x in gids if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gmk = tg.get("group_mention_keywords")
+        if isinstance(gmk, list):
+            cfg.group_mention_keywords = [
+                str(x) for x in gmk if isinstance(x, str)
             ]
 
     cortex = data.get("cortex") or {}
@@ -335,5 +360,15 @@ def load_config(path: Path | None = None) -> TgConfig:
             for k, v in ack.items()
             if isinstance(v, dict)
         }
+
+    bark = data.get("bark") or {}
+    if isinstance(bark, dict):
+        for toml_key, attr in (("push_url", "bark_push_url"), ("icon", "bark_icon")):
+            val = bark.get(toml_key)
+            if isinstance(val, str):
+                setattr(cfg, attr, val)
+        mc = bark.get("max_chars")
+        if isinstance(mc, int) and not isinstance(mc, bool) and mc > 0:
+            cfg.bark_max_chars = mc
 
     return cfg
