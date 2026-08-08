@@ -44,6 +44,10 @@
 - Breaker plumbing: `cortex.ctl pause|resume [--shell cli|tg]` (pause scopes merge), `cortex.ctl wake [--shell]` = clear + kick. Show: `cortex.ctl status`.
 - Auto-trips after `[cortex.breaker].fuse_threshold` fuses within `window_hours` (marrow config.toml).
 
+## Group chat [tg]
+
+Set `[tg].group_ids` to a list of group chat ids (negative integers) to allow members of those groups to reach the bot. The bot then applies a mention gate: it responds only when the message text or caption contains one of `group_mention_keywords` (case-insensitive), the message @-mentions the bot, or the message is a direct reply to the bot's own message. Private messages from whitelisted users are unaffected. Group messages never rebind the bot's private reply target, so unsolicited output (heartbeats, idle notes) always goes to the configured private chat.
+
 ## Hold words
 
 - 等 / 稍等 / 等等 / 先 — hold 10s instead of 5s before flush

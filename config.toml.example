@@ -11,6 +11,16 @@ token = ""
 # broadcasts, cortex shell rounds). Without it those are silently dropped.
 # chat_id = 123456789
 
+# Group chat access. List the Telegram chat ids (negative integers for groups)
+# whose members are allowed to reach the bot. Empty = no group access (default).
+# group_ids = [-1001234567890]
+
+# Keywords that wake the bot in a group. The bot also wakes on @botusername
+# mentions and direct replies to its own messages. Case-insensitive substring.
+# Empty = never respond in groups (even if group_ids is set).
+# group_mention_keywords = ["hey bot", "!ask"]
+
+
 # ── Cortex shell (tg) ─────────────────────────────────
 # Active iff shell_enabled AND shell_id below is a member of marrow's
 # [cortex].shells. Inactive = plain relay resident (no scheduler, no silence

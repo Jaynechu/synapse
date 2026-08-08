@@ -62,10 +62,17 @@ class _ShellSpy:
         pass
 
 
+class _FakeChat:
+    def __init__(self, chat_id: int = 111) -> None:
+        self.id = chat_id
+        self.type = "private"
+
+
 class _FakeMessage:
     def __init__(self, text: str, chat_id: int = 111, message_id: int = 1) -> None:
         self.text = text
         self.chat_id = chat_id
+        self.chat = _FakeChat(chat_id)
         self.date = datetime(2026, 1, 1, tzinfo=timezone.utc)
         self.message_id = message_id
         self.reply_to_message = None

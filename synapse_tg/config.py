@@ -71,6 +71,15 @@ class TgConfig:
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
+    # Group chat access. group_ids: Telegram chat ids (negative ints for groups)
+    # whose members may reach the bot. Empty = no group access (default).
+    # group_mention_keywords: bot responds only when one of these strings
+    # appears in the message text/caption (case-insensitive), OR the bot is
+    # @-mentioned, OR the message replies to one of the bot's own messages.
+    group_ids: list = field(default_factory=list)
+    group_mention_keywords: list = field(default_factory=list)
+
+
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
@@ -209,6 +218,16 @@ def load_config(path: Path | None = None) -> TgConfig:
         if isinstance(aui, list):
             cfg.allowed_user_ids = [
                 x for x in aui if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gids = tg.get("group_ids")
+        if isinstance(gids, list):
+            cfg.group_ids = [
+                x for x in gids if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gmk = tg.get("group_mention_keywords")
+        if isinstance(gmk, list):
+            cfg.group_mention_keywords = [
+                str(x) for x in gmk if isinstance(x, str)
             ]
 
     cortex = data.get("cortex") or {}
