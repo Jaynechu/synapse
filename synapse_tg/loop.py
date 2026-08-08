@@ -41,6 +41,7 @@ from .media.inbound import (
 )
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
+from . import bark as _bark
 from .shell import _tzinfo
 from .split import split_for_tg_typed
 from .typing_action import TypingAction
@@ -1325,3 +1326,6 @@ class TgLoop:
             await asyncio.sleep(_SEND_GAP_SEC)
         else:
             logger.info("reply delivered: %d bubble(s)", total)
+            asyncio.create_task(
+                _bark.push(self._cfg, self._cfg.assistant_name, response)
+            )

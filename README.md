@@ -32,6 +32,9 @@ Requires [marrow](https://github.com/Jaynechu/marrow) installed separately.
 - `[persona]` — user/assistant display names
 - `[cwd_presets]` — named shortcuts for `/cwd N` (key = menu label, order = digit)
 - `[marrow]` — db path + sessionend command template
+- `[bark] push_url` — optional: Bark device URL (https://github.com/Finb/Bark).
+  When set, each assistant reply fires a push notification to the device.
+  `icon` (image URL) and `max_chars` (body truncation, default 150) are optional.
 
 ## Commands
 
