@@ -82,9 +82,6 @@ class Config:
     outbox_poll_interval_s: float = 5.0
     outbox_retry_max: int = 3
 
-    # kick_cmd = cortex.kick launcher (venv python + module).
-    # Empty = kick off.
-    outbox_kick_cmd: list | str | None = None
     # Marks a delivered note as bridge-sent (vs the resident session's own
     # chat), so her phone can tell them apart at a glance. Empty disables.
     outbox_note_prefix: str = "\U0001f4ee "
@@ -154,11 +151,6 @@ def load_config(path: Path | None = None) -> Config:
         rm = outbox.get("retry_max")
         if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
             cfg.outbox_retry_max = rm
-        kc = outbox.get("kick_cmd")
-        if isinstance(kc, list):
-            cfg.outbox_kick_cmd = [str(x) for x in kc]
-        elif isinstance(kc, str) and kc.strip():
-            cfg.outbox_kick_cmd = kc
         if "note_prefix" in outbox and isinstance(outbox["note_prefix"], str):
             cfg.outbox_note_prefix = outbox["note_prefix"]
     core = data.get("core") or {}

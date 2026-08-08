@@ -4,7 +4,7 @@ block any write to the LIVE marrow config dir.
 `synapse_core.providers.cc.ClaudeCodeProvider.spawn()` is the only provider
 that shells out via `subprocess.Popen`. Scoped to cc.py's own `subprocess`
 binding (not the global module) so unrelated Popen/run callers (marrow_session
-mw lookups, alerts, cortex_kick) keep working untouched.
+mw lookups, alerts) keep working untouched.
 """
 
 from __future__ import annotations

@@ -73,9 +73,6 @@ class TgConfig:
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
-    # kick_cmd = cortex.kick launcher (venv python + module), e.g.
-    # ["/path/.venv/bin/python", "-m", "cortex.kick"]. Empty = kick off.
-    outbox_kick_cmd: list = field(default_factory=list)
     # Marks a delivered note as bridge-sent (vs the resident session's own
     # chat), so her phone can tell them apart at a glance. Empty disables.
     outbox_note_prefix: str = "\U0001f4ee "
@@ -221,11 +218,6 @@ def load_config(path: Path | None = None) -> TgConfig:
         rm = outbox.get("retry_max")
         if isinstance(rm, int) and not isinstance(rm, bool) and rm >= 1:
             cfg.outbox_retry_max = rm
-        kc = outbox.get("kick_cmd")
-        if isinstance(kc, list):
-            cfg.outbox_kick_cmd = [str(x) for x in kc]
-        elif isinstance(kc, str) and kc.strip():
-            cfg.outbox_kick_cmd = kc
         if "note_prefix" in outbox and isinstance(outbox["note_prefix"], str):
             cfg.outbox_note_prefix = outbox["note_prefix"]
 
