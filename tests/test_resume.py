@@ -76,7 +76,7 @@ def test_resume_empty_lists_picker() -> None:
     state = BridgeState()
     rows = [
         {"sid": "abcdef12-aaaa", "model": "claude-opus-4-6[1m]", "channel": "wx",
-         "last_active": "2026-06-02T20:00:00Z", "title": "lumi-wx"},
+         "last_active": "2026-06-02T20:00:00Z", "title": "testuser-wx"},
         {"sid": "12345678-bbbb", "model": "sonnet", "channel": "cli",
          "last_active": "2026-06-02T19:00:00Z", "title": ""},
     ]
@@ -88,7 +88,7 @@ def test_resume_empty_lists_picker() -> None:
     # New layout: [ch] title (sid8) model HH:MM
     # `last_active` is UTC; HH:MM is rendered in the local zone so we only
     # assert the structural prefix and let the clock segment be free-form.
-    assert "1. [wx] lumi-wx (abcdef12) Opus 4.6 [1M] " in body
+    assert "1. [wx] testuser-wx (abcdef12) Opus 4.6 [1M] " in body
     # Empty title falls back to a placeholder so the row still has shape.
     assert "2. [cli] (untitled) (12345678) Sonnet " in body
     assert "Reply with the number" in body

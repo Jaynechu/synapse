@@ -80,7 +80,7 @@ def test_death_count_resets_on_successful_recv(env) -> None:
     provider = EchoProvider()
     provider.spawn()
     loop._provider = provider
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
 
     # Trigger a real drain — EchoProvider returns a result event.
@@ -95,10 +95,10 @@ def test_no_alert_on_first_death_with_sid(env, tmp_path) -> None:
     ilink = FakeILink()
     loop, _ = _make_loop(env, ilink, alerts=alerts)
     env["state"].session_id = "sid-alive"
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
 
-    loop._handle_provider_dead(RuntimeError("boom"), "lumi", "ctx")
+    loop._handle_provider_dead(RuntimeError("boom"), "testuser", "ctx")
 
     assert loop._provider_death_count == 1
     alert_files = list((tmp_path / "alerts").glob("*.txt"))
@@ -114,7 +114,7 @@ def test_no_alert_on_second_death_with_sid(env, tmp_path) -> None:
     env["state"].session_id = "sid-alive"
     loop._provider_death_count = 1
 
-    loop._handle_provider_dead(RuntimeError("boom"), "lumi", "ctx")
+    loop._handle_provider_dead(RuntimeError("boom"), "testuser", "ctx")
 
     assert loop._provider_death_count == 2
     assert len(list((tmp_path / "alerts").glob("*.txt"))) == 0
@@ -128,7 +128,7 @@ def test_alert_and_bubble_on_third_death_with_sid(env, tmp_path) -> None:
     env["state"].session_id = "sid-alive"
     loop._provider_death_count = 2
 
-    loop._handle_provider_dead(RuntimeError("cc died"), "lumi", "ctx")
+    loop._handle_provider_dead(RuntimeError("cc died"), "testuser", "ctx")
 
     assert loop._provider_death_count == 3
     alert_files = list((tmp_path / "alerts").glob("*.txt"))
@@ -140,7 +140,7 @@ def test_alert_and_bubble_on_third_death_with_sid(env, tmp_path) -> None:
     assert "consecutive" in data["message"]
     # User bubble sent
     assert len(ilink.sent) == 1
-    assert ilink.sent[0][0] == "lumi"
+    assert ilink.sent[0][0] == "testuser"
 
 
 def test_alert_on_death_without_sid(env, tmp_path) -> None:
@@ -150,7 +150,7 @@ def test_alert_on_death_without_sid(env, tmp_path) -> None:
     loop, _ = _make_loop(env, ilink, alerts=alerts)
     env["state"].session_id = None
 
-    loop._handle_provider_dead(RuntimeError("gone"), "lumi", "ctx")
+    loop._handle_provider_dead(RuntimeError("gone"), "testuser", "ctx")
 
     alert_files = list((tmp_path / "alerts").glob("*.txt"))
     assert len(alert_files) == 1
@@ -167,7 +167,7 @@ def test_ensure_provider_spawn_failure_routes_to_counter(env, tmp_path) -> None:
     ilink = FakeILink()
     loop, _ = _make_loop(env, ilink, alerts=alerts)
     env["state"].session_id = "sid-alive"
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
 
     def bad_factory(model=None, resume_sid=None):

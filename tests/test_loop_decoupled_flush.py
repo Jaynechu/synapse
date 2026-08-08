@@ -62,7 +62,7 @@ def env(tmp_path: Path):
 
 def test_flush_fires_while_poll_thread_is_blocked(env) -> None:
     ilink = BlockingILink(
-        [{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]
+        [{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]
     )
     # Real monotonic clock + a tight poll interval — we want the flush thread
     # to cycle fast so the assertion deadline can stay short.
@@ -95,7 +95,7 @@ def test_flush_fires_while_poll_thread_is_blocked(env) -> None:
                 break
             time.sleep(0.05)
         assert ilink.sent, "flush did not fire while poll was blocked"
-        assert ilink.sent[0][0] == "lumi"
+        assert ilink.sent[0][0] == "testuser"
     finally:
         ilink.release_evt.set()
         loop.stop()

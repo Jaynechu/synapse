@@ -159,7 +159,7 @@ def test_typing_does_not_fire_during_debounce(env, monkeypatch) -> None:
 
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
     loop = _make_loop(env, ilink, clock, SlowEchoProvider(delay=0.0))
@@ -179,7 +179,7 @@ def test_typing_fires_when_provider_send_invoked(env, monkeypatch) -> None:
 
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
     # Slow provider so we can observe the ping starting before recv finishes.
@@ -208,7 +208,7 @@ def test_typing_fires_when_provider_send_invoked(env, monkeypatch) -> None:
     # Typing was live by the time send() ran.
     assert typing_at_send == [True, True]
     args, _ = ilink.send_typing.call_args_list[0]
-    assert args[0] == "lumi"
+    assert args[0] == "testuser"
     assert args[1] == "ctx-1"
     # And it stops after the first reply bubble.
     assert loop._typing_ping is None
@@ -228,8 +228,8 @@ def test_typing_single_pinger_across_debounce_window(env, monkeypatch) -> None:
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
     inbound = [
-        [{"from_wxid": "lumi", "context_token": "ctx-1", "text": "first"}],
-        [{"from_wxid": "lumi", "context_token": "ctx-1", "text": "second"}],
+        [{"from_wxid": "testuser", "context_token": "ctx-1", "text": "first"}],
+        [{"from_wxid": "testuser", "context_token": "ctx-1", "text": "second"}],
     ]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
@@ -258,7 +258,7 @@ def test_typing_stops_after_first_reply_bubble(env, monkeypatch) -> None:
 
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
     loop = _make_loop(env, ilink, clock, SlowEchoProvider(delay=0.0))
@@ -269,7 +269,7 @@ def test_typing_stops_after_first_reply_bubble(env, monkeypatch) -> None:
 
     assert loop._typing_ping is None
     # First reply bubble should have been sent.
-    assert any(s[0] == "lumi" for s in ilink.sent)
+    assert any(s[0] == "testuser" for s in ilink.sent)
 
 
 def test_typing_stops_on_empty_reply(env, monkeypatch) -> None:
@@ -280,7 +280,7 @@ def test_typing_stops_on_empty_reply(env, monkeypatch) -> None:
 
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
     loop = _make_loop(env, ilink, clock, EmptyProvider())
@@ -303,7 +303,7 @@ def test_typing_stops_on_provider_dead(env, monkeypatch) -> None:
 
     monkeypatch.setattr(tp_mod.TypingPing, "__init__", short_init)
 
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
     loop = _make_loop(env, ilink, clock, DeadProvider())

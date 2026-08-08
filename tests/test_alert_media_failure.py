@@ -163,7 +163,7 @@ def test_outbound_first_failure_no_alert(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -185,7 +185,7 @@ def test_outbound_second_failure_emits_alert(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -193,7 +193,7 @@ def test_outbound_second_failure_emits_alert(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -219,7 +219,7 @@ def test_outbound_success_resets_counter(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -231,7 +231,7 @@ def test_outbound_success_resets_counter(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -243,7 +243,7 @@ def test_outbound_success_resets_counter(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -267,7 +267,7 @@ def test_outbound_kinds_tracked_independently(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -275,7 +275,7 @@ def test_outbound_kinds_tracked_independently(tmp_path: Path) -> None:
         client,
         kind="image",
         path=str(img),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )
@@ -286,7 +286,7 @@ def test_outbound_kinds_tracked_independently(tmp_path: Path) -> None:
         client,
         kind="file",
         path=str(fil),
-        to_user_id="lumi",
+        to_user_id="testuser",
         context_token="ctx",
         channel_label="CC-WX",
     )

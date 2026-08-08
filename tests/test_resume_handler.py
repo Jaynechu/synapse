@@ -109,7 +109,7 @@ def test_resume_empty_does_not_replay() -> None:
     state = BridgeState()
     rows = [
         {"sid": "first-sid", "model": "claude-opus-4-6[1m]", "channel": "wx",
-         "last_active": "2026-06-02T19:00:00Z", "title": "lumi"},
+         "last_active": "2026-06-02T19:00:00Z", "title": "testuser"},
     ]
     reg, hooks = _make(state, list_recent_sessions=lambda: rows)
     verdict, reply = reg.dispatch("/resume")

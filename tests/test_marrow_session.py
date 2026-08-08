@@ -123,7 +123,7 @@ def test_get_session_model_empty_sid_returns_none() -> None:
 
 def test_list_recent_sessions_parses_tsv(tmp_path: Path) -> None:
     payload = (
-        "sid-a\tclaude-opus-4-6[1m]\twx\t/Users/test/NY\t2026-06-02T20:00:00Z\tlumi-wx\n"
+        "sid-a\tclaude-opus-4-6[1m]\twx\t/Users/test/NY\t2026-06-02T20:00:00Z\ttestuser-wx\n"
         "sid-b\t-\tcli\t/Users/test/marrow\t2026-06-02T19:00:00Z\t\n"
     )
     fake = type("R", (), {"returncode": 0, "stdout": payload, "stderr": ""})()
@@ -133,7 +133,7 @@ def test_list_recent_sessions_parses_tsv(tmp_path: Path) -> None:
     assert len(rows) == 2
     assert rows[0]["sid"] == "sid-a"
     assert rows[0]["model"] == "claude-opus-4-6[1m]"
-    assert rows[0]["title"] == "lumi-wx"
+    assert rows[0]["title"] == "testuser-wx"
     # `-` model placeholder normalised to empty, no jsonl on disk → stays "".
     assert rows[1]["model"] == ""
     assert rows[1]["channel"] == "cli"

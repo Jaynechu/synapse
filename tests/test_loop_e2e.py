@@ -79,8 +79,8 @@ def _build_loop(env, ilink, clock, wallclock) -> MainLoop:
 def test_two_inbound_bubbles_flush_into_one_provider_turn(env) -> None:
     inbound = [
         [
-            {"from_wxid": "lumi", "context_token": "ctx-1", "text": "hello"},
-            {"from_wxid": "lumi", "context_token": "ctx-1", "text": "world"},
+            {"from_wxid": "testuser", "context_token": "ctx-1", "text": "hello"},
+            {"from_wxid": "testuser", "context_token": "ctx-1", "text": "world"},
         ],
     ]
     ilink = FakeILink(inbound)
@@ -104,10 +104,10 @@ def test_two_inbound_bubbles_flush_into_one_provider_turn(env) -> None:
     assert env["state"].usage_total.get("input_tokens", 0) >= 10
     assert env["state"].usage_total.get("output_tokens", 0) >= 5
     # SessionTracker should have been updated.
-    assert env["sessions"].get("lumi") == "mock-sid-0001"
+    assert env["sessions"].get("testuser") == "mock-sid-0001"
     # At least one outbound bubble sent back to the user.
     assert ilink.sent, "expected at least one outbound send_text call"
-    assert all(to == "lumi" and ctx == "ctx-1" for (to, ctx, _) in ilink.sent)
+    assert all(to == "testuser" and ctx == "ctx-1" for (to, ctx, _) in ilink.sent)
     # The echo content must mention the anchor or original text.
     full_reply = " ".join(t for (_, _, t) in ilink.sent)
     assert "echo" in full_reply
@@ -115,7 +115,7 @@ def test_two_inbound_bubbles_flush_into_one_provider_turn(env) -> None:
 
 def test_no_flush_before_quiet_window(env) -> None:
     inbound = [
-        [{"from_wxid": "lumi", "context_token": "ctx-1", "text": "hello"}],
+        [{"from_wxid": "testuser", "context_token": "ctx-1", "text": "hello"}],
     ]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)
@@ -146,7 +146,7 @@ def test_empty_inbound_is_noop(env) -> None:
 def test_anchor_first_turn_has_no_gap(env) -> None:
     """The assembled message should carry a first-turn anchor when no prior msg."""
     inbound = [
-        [{"from_wxid": "lumi", "context_token": "ctx-1", "text": "ping"}],
+        [{"from_wxid": "testuser", "context_token": "ctx-1", "text": "ping"}],
     ]
     ilink = FakeILink(inbound)
     clock = FakeClock(start=1000.0)

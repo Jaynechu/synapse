@@ -107,7 +107,7 @@ def _build_loop(
 
 
 def test_pause_blocks_tick_and_flush(env) -> None:
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock()
     loop = _build_loop(
@@ -155,7 +155,7 @@ def test_provider_alive_helper_true_when_spawned(env) -> None:
 
 def test_provider_dead_writes_critical_alert_via_sink(env, tmp_path: Path) -> None:
     alerts = AlertSink(alerts_dir=tmp_path / "alerts")
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock()
     loop = _build_loop(
@@ -185,7 +185,7 @@ def test_provider_dead_writes_critical_alert_via_sink(env, tmp_path: Path) -> No
 
 def test_provider_dead_suppressed_when_session_alive(env, tmp_path: Path) -> None:
     alerts = AlertSink(alerts_dir=tmp_path / "alerts")
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock()
     loop = _build_loop(
@@ -212,7 +212,7 @@ def test_provider_dead_suppressed_when_session_alive(env, tmp_path: Path) -> Non
 
 def test_provider_dead_legacy_alert_stub_when_no_sink(env) -> None:
     """When alerts=None, the legacy alert_dir stub still fires (back-compat)."""
-    inbound = [[{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}]]
+    inbound = [[{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}]]
     ilink = FakeILink(inbound)
     clock = FakeClock()
     loop = _build_loop(

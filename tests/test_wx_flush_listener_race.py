@@ -140,7 +140,7 @@ def _loop(tmp_path) -> MainLoop:
         channel_label="CC-WX",
         media_dir=tmp_path / "media",
     )
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx-1"
     return loop
 
@@ -154,7 +154,7 @@ def test_listener_cannot_consume_while_flush_mid_turn(tmp_path):
     prov = BlockingTurnProvider()
     loop._provider = prov
     # Prime a ready buffer so maybe_flush actually runs a turn.
-    loop._buffer.add("hello from lumi")
+    loop._buffer.add("hello from testuser")
     # Force the buffer 'ready' regardless of debounce timing.
     loop._buffer.ready = lambda: True  # type: ignore[assignment]
 

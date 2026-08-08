@@ -143,7 +143,7 @@ def _make_loop(env, ilink, provider, *, alerts=None, cfg=None) -> MainLoop:
     loop._provider.spawn()
     with loop._state_lock:
         loop._buffer.add("go")
-        loop._last_from_wxid = "lumi"
+        loop._last_from_wxid = "testuser"
         loop._last_ctx_token = "ctx-1"
     clock.advance(6.0)
     return loop, clock

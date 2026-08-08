@@ -74,7 +74,7 @@ def test_maybe_flush_lazy_spawns_dead_provider_with_resume_sid(env) -> None:
 
     # Add a buffered message and trip the quiet-window.
     loop._buffer.add("ping")
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
     clock.advance(10.0)
 
@@ -104,7 +104,7 @@ def test_maybe_flush_no_lazy_spawn_without_sid(env) -> None:
     assert loop._provider is None
 
     loop._buffer.add("hi")
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
     clock.advance(10.0)
 
@@ -133,7 +133,7 @@ def test_maybe_flush_reuses_live_provider(env) -> None:
     loop._provider = live
 
     loop._buffer.add("hi")
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
     clock.advance(10.0)
 
@@ -163,7 +163,7 @@ def test_maybe_flush_lazy_spawn_when_provider_dead_object(env) -> None:
     loop._provider = dead
 
     loop._buffer.add("hi")
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx"
     clock.advance(10.0)
 

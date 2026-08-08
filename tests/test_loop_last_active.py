@@ -79,7 +79,7 @@ def test_successful_turn_writes_last_active(_last_active_path: Path, tmp_path: P
     state = BridgeState()
     sessions = SessionTracker(state_path=tmp_path / "sessions.json")
     ilink = _ILink([
-        [{"from_wxid": "lumi", "context_token": "ctx", "text": "hello"}],
+        [{"from_wxid": "testuser", "context_token": "ctx", "text": "hello"}],
     ])
     clock = _Clock(start=1000.0)
     loop = _build_loop(state, sessions, ilink, clock, tmp_path, _last_active_path)
@@ -103,7 +103,7 @@ def test_unflushed_buffer_does_not_write(_last_active_path: Path, tmp_path: Path
     state = BridgeState()
     sessions = SessionTracker(state_path=tmp_path / "sessions.json")
     ilink = _ILink([
-        [{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}],
+        [{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}],
     ])
     clock = _Clock(start=1000.0)
     loop = _build_loop(state, sessions, ilink, clock, tmp_path, _last_active_path)
@@ -121,7 +121,7 @@ def test_channel_override_via_constructor(_last_active_path: Path, tmp_path: Pat
     state = BridgeState()
     sessions = SessionTracker(state_path=tmp_path / "sessions.json")
     ilink = _ILink([
-        [{"from_wxid": "lumi", "context_token": "ctx", "text": "hi"}],
+        [{"from_wxid": "testuser", "context_token": "ctx", "text": "hi"}],
     ])
     clock = _Clock(start=1000.0)
     loop = MainLoop(

@@ -109,11 +109,11 @@ def test_swap_provider_with_none_resume(loop) -> None:
 
 def test_forget_session_drops_current_user(loop) -> None:
     main_loop, _, _, sessions = loop
-    sessions.set("lumi", "sid-1")
-    main_loop._last_from_wxid = "lumi"
-    assert sessions.get("lumi") == "sid-1"
+    sessions.set("testuser", "sid-1")
+    main_loop._last_from_wxid = "testuser"
+    assert sessions.get("testuser") == "sid-1"
     main_loop.forget_session()
-    assert sessions.get("lumi") is None
+    assert sessions.get("testuser") is None
 
 
 def test_forget_session_no_user_is_noop(loop) -> None:

@@ -95,7 +95,7 @@ def _text_item(text: str, ts_ms: int = 1700000000000) -> dict:
 
 def _inbound_msg(*items: dict) -> dict:
     return {
-        "from_wxid": "lumi",
+        "from_wxid": "testuser",
         "context_token": "ctx-1",
         "item_list": list(items),
     }
@@ -149,7 +149,7 @@ def test_fake_quote_bubble_short_ascii() -> None:
 
 
 def test_fake_quote_bubble_short_cn() -> None:
-    assert _build_fake_quote_bubble("累鼠了老公") == "▎累鼠了老公"
+    assert _build_fake_quote_bubble("累鼠了伙伴") == "▎累鼠了伙伴"
 
 
 def test_fake_quote_bubble_collapses_newlines() -> None:

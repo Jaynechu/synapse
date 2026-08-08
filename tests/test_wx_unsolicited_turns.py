@@ -109,7 +109,7 @@ def _loop(tmp_path, alerts=None, storm_cap=5) -> MainLoop:
         channel_label="CC-WX",
         media_dir=tmp_path / "media",
     )
-    loop._last_from_wxid = "lumi"
+    loop._last_from_wxid = "testuser"
     loop._last_ctx_token = "ctx-1"
     return loop
 

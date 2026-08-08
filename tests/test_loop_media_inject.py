@@ -130,7 +130,7 @@ def test_inbound_image_injects_read_tool_path(env) -> None:
         [
             {
                 "_idx": 0,
-                "from_wxid": "lumi",
+                "from_wxid": "testuser",
                 "context_token": "ctx-1",
                 "text": "看这张图",
             },
@@ -173,7 +173,7 @@ def test_inbound_voice_appends_transcribed_text(env) -> None:
         [
             {
                 "_idx": 0,
-                "from_wxid": "lumi",
+                "from_wxid": "testuser",
                 "context_token": "ctx-1",
                 "text": "",
             },
@@ -205,7 +205,7 @@ def test_no_media_no_injection(env) -> None:
         [
             {
                 "_idx": 0,
-                "from_wxid": "lumi",
+                "from_wxid": "testuser",
                 "context_token": "ctx-1",
                 "text": "hello",
             },
@@ -231,7 +231,7 @@ def test_text_only_message_with_media_still_flushes(env) -> None:
         [
             {
                 "_idx": 0,
-                "from_wxid": "lumi",
+                "from_wxid": "testuser",
                 "context_token": "ctx-1",
                 "text": "",
             },

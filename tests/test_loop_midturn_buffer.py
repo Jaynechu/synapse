@@ -132,7 +132,7 @@ def test_reply_ships_even_when_buffer_nonempty_after_drain(env) -> None:
 
     with loop._state_lock:
         loop._buffer.add("original message")
-        loop._last_from_wxid = "lumi"
+        loop._last_from_wxid = "testuser"
         loop._last_ctx_token = "ctx-1"
 
     clock.advance(6.0)
@@ -156,12 +156,12 @@ def test_no_new_inbound_reply_sent_normally(env) -> None:
 
     with loop._state_lock:
         loop._buffer.add("hello")
-        loop._last_from_wxid = "lumi"
+        loop._last_from_wxid = "testuser"
         loop._last_ctx_token = "ctx-1"
 
     clock.advance(6.0)
     loop.maybe_flush()
 
     assert ilink.sent, "Expected reply bubbles to be sent"
-    assert ilink.sent[0][0] == "lumi"
+    assert ilink.sent[0][0] == "testuser"
     assert len(loop._buffer) == 0

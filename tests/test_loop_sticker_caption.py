@@ -177,12 +177,12 @@ def test_parse_multi_sentinels() -> None:
 
 def test_caption_1_rewrites_body_image_materialised(env) -> None:
     """Image + '1' → body is sticker-save instruction; image is still materialised."""
-    inbound = [[{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}]]
+    inbound = [[{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}]]
     # tick() will push "." sentinel for the image; then user sends "1"
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 1, "from_wxid": "lumi", "context_token": "ctx", "text": "1"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 1, "from_wxid": "testuser", "context_token": "ctx", "text": "1"}],
         ],
         media_per_msg={0: [dict(_IMAGE_EVENT)]},
     )
@@ -207,8 +207,8 @@ def test_caption_0_suppresses_image_no_send(env) -> None:
     """Image + '0' → provider.send never called."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 1, "from_wxid": "lumi", "context_token": "ctx", "text": "0"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 1, "from_wxid": "testuser", "context_token": "ctx", "text": "0"}],
         ],
         media_per_msg={0: [dict(_IMAGE_EVENT)]},
     )
@@ -228,8 +228,8 @@ def test_caption_1_with_desc(env) -> None:
     """Image + '1 cute cat' → body includes the desc."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 1, "from_wxid": "lumi", "context_token": "ctx", "text": "1 cute cat"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 1, "from_wxid": "testuser", "context_token": "ctx", "text": "1 cute cat"}],
         ],
         media_per_msg={0: [dict(_IMAGE_EVENT)]},
     )
@@ -252,8 +252,8 @@ def test_normal_text_passthrough(env) -> None:
     """Image + normal text → no sticker rewrite, normal pass-through."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 1, "from_wxid": "lumi", "context_token": "ctx", "text": "what is this?"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 1, "from_wxid": "testuser", "context_token": "ctx", "text": "what is this?"}],
         ],
         media_per_msg={0: [dict(_IMAGE_EVENT)]},
     )
@@ -276,10 +276,10 @@ def test_multi_image_caption_1(env) -> None:
     """3 images + '1' → all images routed, body says 'these images'."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 1, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 2, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
-            [{"_idx": 3, "from_wxid": "lumi", "context_token": "ctx", "text": "1"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 1, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 2, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
+            [{"_idx": 3, "from_wxid": "testuser", "context_token": "ctx", "text": "1"}],
         ],
         media_per_msg={
             0: [dict(_IMAGE_EVENT)],
@@ -308,7 +308,7 @@ def test_no_images_digit_1_passthrough(env) -> None:
     """No images + '1' → just text '1', no caption routing triggered."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": "1"}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": "1"}],
         ],
     )
     clock = FakeClock(1000.0)
@@ -328,7 +328,7 @@ def test_image_only_no_caption_passthrough(env) -> None:
     """Image with no caption (body = '.') → normal pass-through, no routing."""
     ilink = FakeILink(
         inbound_batches=[
-            [{"_idx": 0, "from_wxid": "lumi", "context_token": "ctx", "text": ""}],
+            [{"_idx": 0, "from_wxid": "testuser", "context_token": "ctx", "text": ""}],
         ],
         media_per_msg={0: [dict(_IMAGE_EVENT)]},
     )
