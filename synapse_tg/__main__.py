@@ -13,7 +13,7 @@ from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
-from synapse_core import marrow_session
+from synapse_core import marrow_session, transcript_recover
 from synapse_core.alerts import AlertSink
 from synapse_core.commands import marrow_audit, messages
 from synapse_core.commands.handlers import replay_for_channel
@@ -271,11 +271,61 @@ def main() -> int:
     # [cortex].shells (T7, cfg.shell_active()).
     shell_box: dict = {"host": None, "task": None}
 
+    async def _boot_recovery(bot) -> None:
+        """One-shot: if a persisted inflight marker exists, attempt transcript
+        recovery and deliver the reply, or notify the user the reply was lost."""
+        marker = state.inflight
+        if not marker or not isinstance(marker, dict):
+            return
+        chat_id = marker.get("chat_id")
+        preview = marker.get("body_preview") or ""
+        ts = marker.get("ts") or 0.0
+        sid = marker.get("session_id") or state.session_id
+        logger.warning(
+            "boot_recovery: inflight marker found (chat_id=%s, sid=%s, ts=%s)",
+            chat_id, sid, ts,
+        )
+        recovered: str | None = None
+        if sid and chat_id:
+            cwd = state.cc_cwd or (str(cfg.cwd) if cfg.cwd else None)
+            if cwd:
+                recovered = transcript_recover.recover_reply(
+                    cc_projects_dir=cc_projects_dir,
+                    cwd=cwd,
+                    session_id=sid,
+                    since_ts=ts,
+                )
+        if recovered:
+            logger.info("boot_recovery: transcript recovered (%d chars), delivering", len(recovered))
+            try:
+                await loop._deliver_reply(bot, chat_id, recovered, "")
+            except Exception as e:
+                logger.warning("boot_recovery: deliver failed: %s", e)
+        else:
+            logger.warning("boot_recovery: no transcript recovery — sending lost-reply notice")
+            if chat_id:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=messages.t(
+                            "bridge.reply_lost_on_restart",
+                            state.voice_style,
+                            preview=preview or "—",
+                        ),
+                    )
+                except Exception as e:
+                    logger.warning("boot_recovery: notice send failed: %s", e)
+        # Clear the marker regardless of outcome.
+        state.inflight = None
+        loop._persist_state()
+
     async def _post_init(application) -> None:
         # Bridge-initiated rounds (shell note, unsolicited turn) must ship
         # straight after a restart, before any inbound message arrives.
         loop.attach_bot(application.bot)
         listener_box["task"] = application.create_task(loop._idle_listener())
+        if state.inflight:
+            application.create_task(_boot_recovery(application.bot))
         if cfg.shell_active():
             from .shell import ShellHost
             host = ShellHost(cfg, loop)

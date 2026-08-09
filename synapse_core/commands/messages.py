@@ -297,6 +297,10 @@ MESSAGES: Final[dict[str, dict[str, str]]] = {
         "cn": "桥炸了，再试一次",
         "en": "[bridge: error, try again]",
     },
+    "bridge.reply_lost_on_restart": {
+        "cn": "[上次重启前的回复丢失了，请重新发送消息]\n原消息预览: {preview}",
+        "en": "[reply lost on restart — please resend]\nOriginal message: {preview}",
+    },
     "restart.bubble": {
         "cn": "我重启了",
         "en": "Restarted.",

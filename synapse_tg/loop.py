@@ -1245,6 +1245,22 @@ class TgLoop:
             logger.warning("plain-text fallback send also failed: %s", e)
             return False
 
+    def _set_inflight(self, chat_id: int, body: str) -> None:
+        """Persist an in-flight marker before handing the turn to the provider."""
+        self._state.inflight = {
+            "chat_id": chat_id,
+            "body_preview": body[:120],
+            "ts": time.time(),
+            "session_id": self._state.session_id,
+        }
+        self._persist_state()
+
+    def _clear_inflight(self) -> None:
+        """Persist cleared in-flight marker after successful delivery or abandon."""
+        if self._state.inflight is not None:
+            self._state.inflight = None
+            self._persist_state()
+
     async def _flush_one(self, bot, chat_id: int, buf: InboundBuffer) -> None:
         """Flush one ready buffer to the given chat_id. Routing is fully
         determined by which buffer fired and its associated chat_id."""
@@ -1272,6 +1288,9 @@ class TgLoop:
                             self.ensure_provider()
                             assert self._provider is not None
                             typing.start()
+                            # Persist marker before send so a crash after send
+                            # but before delivery is detectable on next boot.
+                            self._set_inflight(chat_id, body)
                             await asyncio.to_thread(self._provider.send, body)
                             response, thinking = await self._stream_response(bot, chat_id, typing)
                             if self._provider and self._provider.session_id:
@@ -1282,12 +1301,14 @@ class TgLoop:
                         except ProviderDeadError as e:
                             if self._user_initiated_close:
                                 self._user_initiated_close = False
+                                self._clear_inflight()
                                 return
                             logger.error("provider error (attempt %d/2): %s", attempt + 1, e)
                             self._respawn()
                             if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
                                 logger.error("provider gave up after %d consecutive deaths", self._death_count)
                                 self._provider = None
+                                self._clear_inflight()
                                 await self._send_provider_notice(bot, chat_id, "provider.gave_up")
                                 return
                             if attempt == 0:
@@ -1295,10 +1316,12 @@ class TgLoop:
                             # Second failure: hand back to the SAME origin buffer
                             # so the retry routes back to the correct chat_id.
                             buf.prepend(body)
+                            self._clear_inflight()
                             await self._send_provider_notice(bot, chat_id, "provider.restarting")
                             return
                 except Exception as e:
                     logger.error("unexpected error: %s", e)
+                    self._clear_inflight()
                     await bot.send_message(chat_id=chat_id, text=messages.t("bridge.error", self._state.voice_style))
                     return
                 finally:
@@ -1316,6 +1339,7 @@ class TgLoop:
             # InboundBuffer (never drained) and become the next turn — no merge,
             # no reply-drop.
             await self._deliver_reply(bot, chat_id, response, thinking)
+            self._clear_inflight()
         finally:
             self._notice_defer -= 1
             await self._flush_notices(bot, chat_id)

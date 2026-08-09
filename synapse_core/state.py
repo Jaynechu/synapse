@@ -59,6 +59,11 @@ class BridgeState:
     # /cwd — current cwd cc subprocess spawns in. None = use DEFAULT_CC_CWD.
     # Persisted; survives bridge restart so the active project sticks.
     cc_cwd: str | None = None
+    # In-flight turn marker: set before provider.send(), cleared after
+    # _deliver_reply completes. Persisted so boot recovery can detect a reply
+    # that was completed by the provider but never delivered (crash mid-turn).
+    # Fields: chat_id (int), body_preview (str), ts (float), session_id (str|None).
+    inflight: dict | None = None
 
 
 def remember_resolved_model(
