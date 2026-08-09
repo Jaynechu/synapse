@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import queue
+import time
 import re
 import subprocess
 import threading
@@ -87,6 +88,71 @@ class _NullTyping:
         pass
 
 
+def _chat_meta(msg) -> str:
+    """Prefix injected into buffered group messages so the LLM sees sender
+    context. Returns empty string for private chats."""
+    chat = getattr(msg, "chat", None)
+    if chat is not None and chat.type in ("group", "supergroup"):
+        user = msg.from_user
+        name = user.first_name if user else "?"
+        uid = user.id if user else "?"
+        title = chat.title or str(chat.id)
+        return f"[群:{title} from:{name}({uid})] "
+    return ""
+
+
+def _passes_mention_gate(
+    msg,
+    bot_username: str | None,
+    bot_id: int | None,
+    keywords: list[str],
+    *,
+    afterglow_sec: float = 0.0,
+    last_outbound: "dict[int, float] | None" = None,
+    forward_allow_ids: "list[int] | None" = None,
+) -> bool:
+    """Group mention gate: accept iff keyword hit, @botusername mention,
+    reply to a bot message, within afterglow window, or forwarded from an
+    allowed user. Returns True for private messages (gate N/A)."""
+    chat = getattr(msg, "chat", None)
+    if chat is None or chat.type not in ("group", "supergroup"):
+        return True
+    text = msg.text or msg.caption or ""
+    # (a) keyword hit (case-insensitive substring)
+    lower = text.lower()
+    for kw in keywords:
+        if kw.lower() in lower:
+            return True
+    # (b) @botusername mention
+    if bot_username and f"@{bot_username}".lower() in lower:
+        return True
+    # (c) reply to bot's own message
+    reply = msg.reply_to_message
+    if (
+        reply is not None
+        and reply.from_user is not None
+        and bot_id is not None
+        and reply.from_user.id == bot_id
+    ):
+        return True
+    # (d) afterglow window: bot recently sent a message to this chat
+    if (
+        afterglow_sec > 0
+        and last_outbound is not None
+        and (time.monotonic() - last_outbound.get(chat.id, 0.0)) < afterglow_sec
+    ):
+        return True
+    # (e) forwarded message from an allowed user id
+    if (
+        forward_allow_ids
+        and getattr(msg, "forward_origin", None) is not None
+        and msg.from_user is not None
+        and msg.from_user.id in forward_allow_ids
+    ):
+        return True
+    return False
+
+
 TG_BUBBLE_FORMAT_PROMPT = (
     "Reply format (IM bubbles):\n"
     "- Blank line = new bubble. Single line break = new line inside the same bubble.\n"
@@ -159,6 +225,14 @@ class TgLoop:
             )
         self._user_initiated_close = False
         self._msg_id_cache: collections.OrderedDict[int, str] = collections.OrderedDict()
+        # Routing: private messages use _private_buffer; each group chat gets
+        # its own InboundBuffer so private and group content never merge in one
+        # debounce window and routing travels with the message through flush.
+        self._private_buffer: InboundBuffer = self._buffer  # alias for compat
+        self._group_buffers: dict[int, InboundBuffer] = {}
+        # Afterglow tracking: monotonic timestamp of last outbound message per
+        # group chat_id. Used by the mention gate's afterglow window.
+        self._last_outbound: dict[int, float] = {}
         # Resident idle listener: drains unsolicited (background-task) turns
         # between sends so they never rot in the stdout queue and mispair.
         self._listener_stop = asyncio.Event()
@@ -246,6 +320,8 @@ class TgLoop:
         self._state.session_id = None
         self._death_count = 0
         self._buffer = InboundBuffer()
+        self._private_buffer = self._buffer
+        self._group_buffers.clear()
         if self._sessions is not None:
             for cid in list(self._sessions.snapshot()):
                 self._sessions.forget(cid)
@@ -916,16 +992,64 @@ class TgLoop:
             except Exception as e:
                 logger.warning("send_extra_bubbles failed: %s", e)
 
-    def _track(self, bot: Bot, chat_id: int, count_activity: bool = True) -> None:
+    def _track(self, bot: Bot, chat_id: int, count_activity: bool = True,
+               is_group: bool = False) -> None:
         self._bot = bot
-        self._pending_chat_id = chat_id
+        # Group messages must not rebind the private reply target so that
+        # unsolicited output keeps going to the private chat.
+        if not is_group:
+            self._pending_chat_id = chat_id
         # An inbound message restarts the cortex shell's silence cycle and
         # cancels a booked wake only when it actually reaches the LLM. Text
         # turns count a "forward" verdict or an injected rewrite; anything the
         # registry consumes without injecting leaves a scheduled wake standing.
-        # Media turns always count.
-        if count_activity and self._shell is not None:
+        # Media turns always count. Group messages must not reset the owner's
+        # idle cycle.
+        if count_activity and not is_group and self._shell is not None:
             self._shell.on_user_message()
+
+    def _check_group_gate(self, msg) -> bool:
+        """Return True if the message may proceed past the mention gate.
+
+        For private messages always True. When group_ids is empty (feature
+        off), also returns True to restore pre-feature behaviour. For
+        group/supergroup messages in an enabled group, applies
+        _passes_mention_gate. Does NOT set routing state here — routing is
+        resolved at flush time from the per-group buffer."""
+        chat = getattr(msg, "chat", None)
+        if chat is None or chat.type not in ("group", "supergroup"):
+            return True
+        # Group feature off: treat like a normal private message.
+        if not self._cfg.group_ids:
+            return True
+        bot_username = self._bot.username if self._bot is not None else None
+        bot_id = self._bot.id if self._bot is not None else None
+        keywords = self._cfg.group_mention_keywords
+        if not _passes_mention_gate(
+            msg, bot_username, bot_id, keywords,
+            afterglow_sec=self._cfg.group_afterglow_sec,
+            last_outbound=self._last_outbound,
+            forward_allow_ids=self._cfg.group_forward_allow_ids,
+        ):
+            logger.debug(
+                "group gate: dropped (chat=%s, user=%s)",
+                chat.id, getattr(msg.from_user, "id", None),
+            )
+            return False
+        return True
+
+    def _is_owner(self, from_uid: int | None) -> bool:
+        """True if the sender is the configured owner (allowed_user_ids or chat_id)."""
+        if from_uid is None:
+            return False
+        ids = self._cfg.effective_allowed_user_ids()
+        return int(from_uid) in ids
+
+    def _buf_for(self, chat_id: int, is_group: bool) -> InboundBuffer:
+        """Return the correct buffer for this message's origin."""
+        if is_group:
+            return self._group_buffers.setdefault(chat_id, InboundBuffer())
+        return self._private_buffer
 
     async def on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or update.message.text is None:
@@ -933,14 +1057,28 @@ class TgLoop:
         text = update.message.text.strip()
         if not text:
             return
-        # Dispatch before _track: its verdict plus any pending rewrite tells a
-        # message that feeds the LLM apart from one the registry only consumes.
-        # Nothing inside dispatch reads the bot/chat_id _track binds. Both are
-        # synchronous, so no other task can observe the gap.
-        action, ack = self._registry.dispatch(text)
-        inject = self._registry.pending_rewrite
-        self._track(context.bot, update.message.chat_id,
-                     count_activity=(action == "forward" or bool(inject)))
+        msg = update.message
+        _chat = getattr(msg, "chat", None)
+        is_group = _chat is not None and _chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        # Command dispatch: only the owner may run slash-commands.
+        # Non-owner group messages are forwarded to the LLM without dispatch.
+        _from_user = getattr(msg, "from_user", None)
+        from_uid = getattr(_from_user, "id", None) if _from_user else None
+        if is_group and not self._is_owner(from_uid):
+            action, ack = "forward", None
+            inject = None
+        else:
+            # Dispatch before _track: its verdict plus any pending rewrite tells a
+            # message that feeds the LLM apart from one the registry only consumes.
+            # Nothing inside dispatch reads the bot/chat_id _track binds. Both are
+            # synchronous, so no other task can observe the gap.
+            action, ack = self._registry.dispatch(text)
+            inject = self._registry.pending_rewrite
+        self._track(context.bot, msg.chat_id,
+                     count_activity=(action == "forward" or bool(inject)),
+                     is_group=is_group)
 
         if action == "handled":
             if self._queued_extra_bubbles:
@@ -948,86 +1086,123 @@ class TgLoop:
                 self._queued_extra_bubbles.clear()
                 for b in bubbles:
                     try:
-                        await context.bot.send_message(chat_id=update.message.chat_id, text=b)
+                        await context.bot.send_message(chat_id=msg.chat_id, text=b)
                         await asyncio.sleep(_SEND_GAP_SEC)
                     except Exception:
                         pass
-            if ack and update.message:
-                await update.message.reply_text(ack)
+            if ack:
+                await msg.reply_text(ack)
             if inject:
-                self._buffer.add(inject)
+                self._private_buffer.add(inject)
             return
 
         quote_prefix = ""
-        reply = update.message.reply_to_message
+        reply = msg.reply_to_message
         if reply and reply.text:
             quoted = reply.text[:80]
             quote_prefix = f'[quoting: "{quoted}"]\n'
-        self._buffer.add(f"{quote_prefix}{text}" if quote_prefix else text)
+        meta = _chat_meta(msg)
+        full = f"{meta}{quote_prefix}{text}" if meta else f"{quote_prefix}{text}"
+        # Route to per-origin buffer so private and group content never merge
+        # in the same debounce window.
+        if is_group:
+            buf = self._group_buffers.setdefault(msg.chat_id, InboundBuffer())
+            buf.add(full)
+        else:
+            self._private_buffer.add(full)
         logger.info("inbound: %r (len=%d)", text[:60], len(text))
-        if update.message:
-            self._msg_id_cache[update.message.message_id] = text
-            if len(self._msg_id_cache) > 50:
-                self._msg_id_cache.popitem(last=False)
+        self._msg_id_cache[msg.message_id] = text
+        if len(self._msg_id_cache) > 50:
+            self._msg_id_cache.popitem(last=False)
 
     async def on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.photo:
             return
-        self._track(context.bot, update.message.chat_id)
-        paths = await materialize_photo(context.bot, update.message, self._cfg.data_dir)
+        msg = update.message
+        _msg_chat = getattr(msg, "chat", None)
+        is_group = _msg_chat is not None and _msg_chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        self._track(context.bot, msg.chat_id, is_group=is_group)
+        paths = await materialize_photo(context.bot, msg, self._cfg.data_dir)
         if paths:
             instruction = build_read_instruction(paths)
-            caption = (update.message.caption or "").strip()
+            caption = (msg.caption or "").strip()
+            cmeta = _chat_meta(msg)
             body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
+            self._buf_for(msg.chat_id, is_group).add(f"{cmeta}{body}" if cmeta else body)
             logger.debug("buffered photo: %s", paths)
 
     async def on_animation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.animation:
             return
-        self._track(context.bot, update.message.chat_id)
-        path = await materialize_animation(context.bot, update.message, self._cfg.data_dir)
+        msg = update.message
+        _msg_chat = getattr(msg, "chat", None)
+        is_group = _msg_chat is not None and _msg_chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        self._track(context.bot, msg.chat_id, is_group=is_group)
+        path = await materialize_animation(context.bot, msg, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
+            caption = (msg.caption or "").strip()
+            cmeta = _chat_meta(msg)
             body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
+            self._buf_for(msg.chat_id, is_group).add(f"{cmeta}{body}" if cmeta else body)
             logger.debug("buffered animation: %s", path)
 
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.document:
             return
-        self._track(context.bot, update.message.chat_id)
-        path = await materialize_document(context.bot, update.message, self._cfg.data_dir)
+        msg = update.message
+        _msg_chat = getattr(msg, "chat", None)
+        is_group = _msg_chat is not None and _msg_chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        self._track(context.bot, msg.chat_id, is_group=is_group)
+        path = await materialize_document(context.bot, msg, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
+            caption = (msg.caption or "").strip()
+            cmeta = _chat_meta(msg)
             body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
+            self._buf_for(msg.chat_id, is_group).add(f"{cmeta}{body}" if cmeta else body)
             logger.debug("buffered document: %s", path)
 
     async def on_sticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.sticker:
             return
-        self._track(context.bot, update.message.chat_id)
-        path = await materialize_sticker(context.bot, update.message, self._cfg.data_dir)
+        msg = update.message
+        _msg_chat = getattr(msg, "chat", None)
+        is_group = _msg_chat is not None and _msg_chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        self._track(context.bot, msg.chat_id, is_group=is_group)
+        path = await materialize_sticker(context.bot, msg, self._cfg.data_dir)
         if path:
-            stk = update.message.sticker
-            meta = f"[sticker: emoji={stk.emoji or '?'}, set={stk.set_name or 'none'}]"
+            stk = msg.sticker
+            cmeta = _chat_meta(msg)
+            stk_meta = f"[sticker: emoji={stk.emoji or '?'}, set={stk.set_name or 'none'}]"
             instruction = build_read_instruction([path])
-            self._buffer.add(f"{meta}\n{instruction}")
+            self._buf_for(msg.chat_id, is_group).add(f"{cmeta}{stk_meta}\n{instruction}" if cmeta else f"{stk_meta}\n{instruction}")
             logger.debug("buffered sticker: %s", path)
 
     async def on_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.video:
             return
-        self._track(context.bot, update.message.chat_id)
-        path = await materialize_video(context.bot, update.message, self._cfg.data_dir)
+        msg = update.message
+        _msg_chat = getattr(msg, "chat", None)
+        is_group = _msg_chat is not None and _msg_chat.type in ("group", "supergroup")
+        if is_group and not self._check_group_gate(msg):
+            return
+        self._track(context.bot, msg.chat_id, is_group=is_group)
+        path = await materialize_video(context.bot, msg, self._cfg.data_dir)
         if path:
             instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
+            caption = (msg.caption or "").strip()
+            cmeta = _chat_meta(msg)
             body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
+            self._buf_for(msg.chat_id, is_group).add(f"{cmeta}{body}" if cmeta else body)
             logger.debug("buffered video: %s", path)
 
     async def _send_text_bubble(self, bot: Bot, send_kwargs: dict, fallback_kwargs: dict) -> bool:
@@ -1051,21 +1226,29 @@ class TgLoop:
             return False
 
         try:
-            return await _attempt(send_kwargs)
+            ok = await _attempt(send_kwargs)
+            if ok:
+                cid = send_kwargs.get("chat_id")
+                if cid is not None:
+                    self._last_outbound[cid] = time.monotonic()
+            return ok
         except Exception as e:
             logger.warning("send_message failed, trying plain-text fallback: %s", e)
         try:
-            return await _attempt(fallback_kwargs)
+            ok = await _attempt(fallback_kwargs)
+            if ok:
+                cid = fallback_kwargs.get("chat_id")
+                if cid is not None:
+                    self._last_outbound[cid] = time.monotonic()
+            return ok
         except Exception as e:
             logger.warning("plain-text fallback send also failed: %s", e)
             return False
 
-    async def check_flush(self, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._buffer.ready() or self._pending_chat_id is None:
-            return
-        bot = self._bot or context.bot
-        chat_id = self._pending_chat_id
-        body = self._buffer.flush()
+    async def _flush_one(self, bot, chat_id: int, buf: InboundBuffer) -> None:
+        """Flush one ready buffer to the given chat_id. Routing is fully
+        determined by which buffer fired and its associated chat_id."""
+        body = buf.flush()
         if not body:
             return
 
@@ -1109,8 +1292,9 @@ class TgLoop:
                                 return
                             if attempt == 0:
                                 continue
-                            # Second failure: hand back to the buffer + notice.
-                            self._buffer.prepend(body)
+                            # Second failure: hand back to the SAME origin buffer
+                            # so the retry routes back to the correct chat_id.
+                            buf.prepend(body)
                             await self._send_provider_notice(bot, chat_id, "provider.restarting")
                             return
                 except Exception as e:
@@ -1136,6 +1320,21 @@ class TgLoop:
             self._notice_defer -= 1
             await self._flush_notices(bot, chat_id)
         await self._shell_after_turn()
+
+    async def check_flush(self, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if self._bot is None:
+            self._bot = context.bot
+        bot = self._bot or context.bot
+
+        # Flush private buffer first. Use self._buffer (the canonical reference)
+        # so test code that replaces loop._buffer directly still works.
+        if self._buffer.ready() and self._pending_chat_id is not None:
+            await self._flush_one(bot, self._pending_chat_id, self._buffer)
+
+        # Flush any ready group buffers independently.
+        for group_chat_id, gbuf in list(self._group_buffers.items()):
+            if gbuf.ready():
+                await self._flush_one(bot, group_chat_id, gbuf)
 
     async def _shell_after_turn(self) -> None:
         """Hand a completed turn to the cortex shell host (token ledger + fuse).

@@ -71,6 +71,21 @@ class TgConfig:
     # chat_id fallback (private chats: chat_id == user_id).
     allowed_user_ids: list = field(default_factory=list)
 
+    # Group chat access. group_ids: Telegram chat ids (negative ints for groups)
+    # whose members may reach the bot. Empty = no group access (default).
+    # group_mention_keywords: bot responds only when one of these strings
+    # appears in the message text/caption (case-insensitive), OR the bot is
+    # @-mentioned, OR the message replies to one of the bot's own messages.
+    group_ids: list = field(default_factory=list)
+    group_mention_keywords: list = field(default_factory=list)
+    # Afterglow window (seconds). If the bot sent a message to a group within
+    # this many seconds ago, all subsequent messages from that group pass the
+    # gate. 0 = disabled (default).
+    group_afterglow_sec: float = 0.0
+    # Forwarded-message allowlist. If a message is a forward AND its sender's
+    # user id is in this list, it passes the gate regardless of keywords.
+    group_forward_allow_ids: list = field(default_factory=list)
+
     # Empty = follow the OS timezone; set an IANA name to pin it.
     timezone: str = ""
 
@@ -203,6 +218,24 @@ def load_config(path: Path | None = None) -> TgConfig:
         if isinstance(aui, list):
             cfg.allowed_user_ids = [
                 x for x in aui if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gids = tg.get("group_ids")
+        if isinstance(gids, list):
+            cfg.group_ids = [
+                x for x in gids if isinstance(x, int) and not isinstance(x, bool)
+            ]
+        gmk = tg.get("group_mention_keywords")
+        if isinstance(gmk, list):
+            cfg.group_mention_keywords = [
+                str(x) for x in gmk if isinstance(x, str)
+            ]
+        gas = tg.get("group_afterglow_sec")
+        if isinstance(gas, (int, float)) and not isinstance(gas, bool) and gas >= 0:
+            cfg.group_afterglow_sec = float(gas)
+        gfa = tg.get("group_forward_allow_ids")
+        if isinstance(gfa, list):
+            cfg.group_forward_allow_ids = [
+                x for x in gfa if isinstance(x, int) and not isinstance(x, bool)
             ]
 
     cortex = data.get("cortex") or {}
