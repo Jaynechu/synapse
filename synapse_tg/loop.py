@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from telegram import Bot, Update
+from telegram import Bot, Message, Update
 from telegram.error import RetryAfter
 from telegram.ext import ContextTypes
 
@@ -63,6 +63,11 @@ _LISTEN_POLL_TIMEOUT_SEC = 1.0
 _LISTEN_RELEASE_SLEEP_SEC = 0.25
 
 _QUOTE_TAG = re.compile(r"<quote>(.*?)</quote>\n?", re.DOTALL | re.IGNORECASE)
+
+# Placeholder a captionless media puts on the inbound buffer so the quiet
+# window restarts and ready() flips; dropped again when the body is assembled.
+_MEDIA_SENTINEL = "\u200b"
+_MEDIA_FAILED_LINE = "[media failed to download]"
 
 # Marker the recv-drain thread puts after each turn's result so the async
 # consumer can tell turn boundaries apart across multiple back-to-back turns.
@@ -145,6 +150,9 @@ class TgLoop:
         self._lock = asyncio.Lock()
         self._death_count = 0
         self._buffer = InboundBuffer()
+        # Media whose download is deferred to flush time, paired with the
+        # buffer slot its handler already reserved.
+        self._pending_media: list[tuple[str, "Message"]] = []
         self._pending_chat_id: int | None = None
         self._bot: Bot | None = None
         self._state_path = cfg.data_dir / "bridge_state.json"
@@ -246,6 +254,7 @@ class TgLoop:
         self._state.session_id = None
         self._death_count = 0
         self._buffer = InboundBuffer()
+        self._pending_media = []
         if self._sessions is not None:
             for cid in list(self._sessions.snapshot()):
                 self._sessions.forget(cid)
@@ -970,65 +979,87 @@ class TgLoop:
             if len(self._msg_id_cache) > 50:
                 self._msg_id_cache.popitem(last=False)
 
+    def _queue_media(self, kind: str, message: "Message") -> None:
+        """Reserve this media's place in the inbound buffer, download later.
+
+        Runs to completion before the handler's first await, so check_flush
+        cannot slip in between the message arriving and the buffer slot being
+        taken — a text bubble sent seconds earlier stays in the same turn.
+        Caption (or sticker meta) goes in now; the Read instruction is appended
+        at flush time once the file is on disk.
+        """
+        if kind == "sticker":
+            stk = message.sticker
+            lead = f"[sticker: emoji={stk.emoji or '?'}, set={stk.set_name or 'none'}]"
+        else:
+            lead = (message.caption or "").strip()
+        self._pending_media.append((kind, message))
+        self._buffer.add(lead or _MEDIA_SENTINEL)
+
     async def on_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.photo:
             return
         self._track(context.bot, update.message.chat_id)
-        paths = await materialize_photo(context.bot, update.message, self._cfg.data_dir)
-        if paths:
-            instruction = build_read_instruction(paths)
-            caption = (update.message.caption or "").strip()
-            body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
-            logger.debug("buffered photo: %s", paths)
+        self._queue_media("photo", update.message)
 
     async def on_animation(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.animation:
             return
         self._track(context.bot, update.message.chat_id)
-        path = await materialize_animation(context.bot, update.message, self._cfg.data_dir)
-        if path:
-            instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
-            body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
-            logger.debug("buffered animation: %s", path)
+        self._queue_media("animation", update.message)
 
     async def on_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.document:
             return
         self._track(context.bot, update.message.chat_id)
-        path = await materialize_document(context.bot, update.message, self._cfg.data_dir)
-        if path:
-            instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
-            body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
-            logger.debug("buffered document: %s", path)
+        self._queue_media("document", update.message)
 
     async def on_sticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.sticker:
             return
         self._track(context.bot, update.message.chat_id)
-        path = await materialize_sticker(context.bot, update.message, self._cfg.data_dir)
-        if path:
-            stk = update.message.sticker
-            meta = f"[sticker: emoji={stk.emoji or '?'}, set={stk.set_name or 'none'}]"
-            instruction = build_read_instruction([path])
-            self._buffer.add(f"{meta}\n{instruction}")
-            logger.debug("buffered sticker: %s", path)
+        self._queue_media("sticker", update.message)
 
     async def on_video(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message is None or not update.message.video:
             return
         self._track(context.bot, update.message.chat_id)
-        path = await materialize_video(context.bot, update.message, self._cfg.data_dir)
-        if path:
-            instruction = build_read_instruction([path])
-            caption = (update.message.caption or "").strip()
-            body = f"{caption}\n{instruction}" if caption else instruction
-            self._buffer.add(body)
-            logger.debug("buffered video: %s", path)
+        self._queue_media("video", update.message)
+
+    async def _materialize_pending(
+        self, bot: Bot, pending: list[tuple[str, "Message"]]
+    ) -> list[str]:
+        """Download a drained media snapshot → one Read instruction per item.
+
+        Network IO, so it runs after the buffer snapshot, never inside it. A
+        download that raises costs its own line only: the rest of the turn
+        still ships.
+        """
+        lines: list[str] = []
+        for kind, message in pending:
+            try:
+                paths = await self._download_media(bot, kind, message)
+            except Exception as e:
+                logger.warning("media download failed (%s): %s", kind, e)
+                lines.append(_MEDIA_FAILED_LINE)
+                continue
+            if paths:
+                lines.append(build_read_instruction(paths))
+                logger.debug("buffered %s: %s", kind, paths)
+        return lines
+
+    async def _download_media(self, bot: Bot, kind: str, message: "Message") -> list[Path]:
+        data_dir = self._cfg.data_dir
+        if kind == "photo":
+            return list(await materialize_photo(bot, message, data_dir))
+        materialize = {
+            "animation": materialize_animation,
+            "document": materialize_document,
+            "sticker": materialize_sticker,
+            "video": materialize_video,
+        }[kind]
+        path = await materialize(bot, message, data_dir)
+        return [path] if path else []
 
     async def _send_text_bubble(self, bot: Bot, send_kwargs: dict, fallback_kwargs: dict) -> bool:
         """Send one text bubble with 429 RetryAfter handling and a plain-text
@@ -1066,6 +1097,12 @@ class TgLoop:
         bot = self._bot or context.bot
         chat_id = self._pending_chat_id
         body = self._buffer.flush()
+        pending = self._pending_media
+        self._pending_media = []
+        if pending:
+            kept = [ln for ln in body.split("\n") if ln != _MEDIA_SENTINEL] if body else []
+            instructions = await self._materialize_pending(bot, pending)
+            body = "\n".join(kept + instructions)
         if not body:
             return
 

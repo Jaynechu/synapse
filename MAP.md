@@ -50,7 +50,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 ## 3. Inbound
 
 - Shared: InboundBuffer → time_anchor → channel_marker [channel: xx] per prompt.
-- [tg] python-telegram-bot Update handler — text, voice, photo, document, video, sticker. File API download to tmp. Voice OGG → cc transcribe. Sticker webp materialize. Quote: native reply_to_message → [quoting: "..."].
+- [tg] python-telegram-bot Update handler — text, voice, photo, document, video, sticker. Media handler adds its buffer slot synchronously (caption / sticker meta, else zero-width placeholder) + queues the message on `_pending_media`; check_flush drains buffer + pending together, then downloads and appends the Read instruction. Download failure → `[media failed to download]` line, turn still ships. Voice OGG → cc transcribe. Quote: native reply_to_message → [quoting: "..."].
 - [wx] ILink.poll_messages (1s, retry-wrapped). Cursor atomic tmp+rename. Media: AES-128-ECB decrypt (3 key-shape fallbacks). PDF >20p: pdftotext → markitdown. Sticker caption routing: 0=suppress, 1=sticker-save, 1+text=ingest. Quote: iLink reference → [quoting: "..."].
 
 ## 4. Outbound
