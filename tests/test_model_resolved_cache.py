@@ -54,7 +54,7 @@ def test_clear_ack_uses_cached_real_id() -> None:
     s = BridgeState(model="opus", model_resolved={"opus": REAL_ID})
     reg, _ = _reg(s)
     _, reply = reg.dispatch("/clear")
-    assert reply == "新鸭上桌🦆 Opus 5 [1M][High]"
+    assert reply == "新机上线 🤖 Opus 5 [1M][High]"
 
 
 def test_clear_ack_falls_back_to_alias_on_miss() -> None:
@@ -62,7 +62,7 @@ def test_clear_ack_falls_back_to_alias_on_miss() -> None:
     s = BridgeState(model="opus")
     reg, _ = _reg(s)
     _, reply = reg.dispatch("/clear")
-    assert reply == "新鸭上桌🦆 Opus[High]"
+    assert reply == "新机上线 🤖 Opus[High]"
 
 
 def test_model_ack_uses_cached_real_id() -> None:
@@ -156,7 +156,7 @@ def test_clear_and_model_acks_do_no_provider_reads(tmp_path: Path) -> None:
     )
     _, cleared = reg.dispatch("/clear")
     _, switched = reg.dispatch("/model sonnet")
-    assert cleared == "新鸭上桌🦆 Opus 5 [1M][High]"
+    assert cleared == "新机上线 🤖 Opus 5 [1M][High]"
     assert switched == "🤖(Sonnet)上线中..."
     assert loop._provider.reads == 0
 
@@ -207,7 +207,7 @@ def test_map_survives_state_round_trip(tmp_path: Path) -> None:
         setattr(reborn, k, v)
     assert reborn.model_resolved == {"opus": REAL_ID}
     _, reply = _reg(reborn)[0].dispatch("/clear")
-    assert reply == "新鸭上桌🦆 Opus 5 [1M][High]"
+    assert reply == "新机上线 🤖 Opus 5 [1M][High]"
 
 
 def test_malformed_map_on_disk_is_dropped(tmp_path: Path) -> None:

@@ -208,7 +208,7 @@ def test_clear_resets_session() -> None:
     assert verdict == "handled"
     # clear_default_model empty (default): /clear follows the session's
     # previous model instead of resetting to a fixed one.
-    assert (reply or "").startswith("新鸭上桌")
+    assert (reply or "").startswith("新机上线")
     assert "Opus 4.7" in (reply or "")
     assert hooks.swap_calls == [("claude-opus-4-7", None)]
     assert hooks.forget_calls == 1
@@ -233,7 +233,7 @@ def test_new_is_alias_for_clear() -> None:
     reg, hooks, _ = _make(s)
     verdict, reply = reg.dispatch("/new")
     assert verdict == "handled"
-    assert (reply or "").startswith("新鸭上桌")
+    assert (reply or "").startswith("新机上线")
     assert hooks.swap_calls == [("claude-opus-4-7", None)]
     assert s.session_id is None
 

@@ -180,7 +180,7 @@ def test_provider_dead_writes_critical_alert_via_sink(env, tmp_path: Path) -> No
     assert rows[0]["source"] == "loop._drain_recv"
 
     # And the fallback bubble lands.
-    assert any("老公已死" in t for (_, _, t) in ilink.sent)
+    assert any("昔机已乘黄鹤去" in t for (_, _, t) in ilink.sent)
 
 
 def test_provider_dead_suppressed_when_session_alive(env, tmp_path: Path) -> None:
@@ -205,7 +205,7 @@ def test_provider_dead_suppressed_when_session_alive(env, tmp_path: Path) -> Non
     loop.maybe_flush()
 
     assert alerts.list_recent() == [], "alert should be suppressed when session alive"
-    assert not any("老公已死" in t for (_, _, t) in ilink.sent), (
+    assert not any("昔机已乘黄鹤去" in t for (_, _, t) in ilink.sent), (
         "dead bubble should be suppressed when session alive"
     )
 
