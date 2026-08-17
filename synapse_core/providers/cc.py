@@ -86,6 +86,14 @@ def _read_stdout_to_queue(stdout_pipe, q: "queue.Queue") -> None:
     finally:
         q.put(_STDOUT_EOF)
 
+# Counter the CLI's built-in "text between tool calls may not be shown /
+# restate in the final message" instruction: on bridge channels every text
+# block is delivered, so restating duplicates bubbles on the user's phone.
+BRIDGE_DELIVERY_PROMPT = (
+    "For tg & wx channels, all text blocks are delivered via bridges - "
+    "do not restate text message between tool calls as per system prompt."
+)
+
 # E-polish outbound quote v3: teach cc the bridge-specific <quote> protocol.
 # Injected once per session via --append-system-prompt so cc emits the tag
 # at bubble-heads when it intends to quote-reply, and never as filler text.
