@@ -91,7 +91,9 @@ def _read_stdout_to_queue(stdout_pipe, q: "queue.Queue") -> None:
 # block is delivered, so restating duplicates bubbles on the user's phone.
 BRIDGE_DELIVERY_PROMPT = (
     "For tg & wx channels, all text blocks are delivered via bridges - "
-    "do not restate text message between tool calls as per system prompt."
+    "do not restate text message between tool calls as per system prompt. "
+    "Every reply turn must include your reply as text blocks - not just thinking"
+    "or sticker; esp. when you process incoming media, make sure you write text out."
 )
 
 # E-polish outbound quote v3: teach cc the bridge-specific <quote> protocol.
