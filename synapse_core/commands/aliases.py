@@ -5,13 +5,14 @@ from __future__ import annotations
 import re
 
 MODEL_ALIASES: dict[str, str] = {
-    # Legacy opus versions stay pinned to the 1M-context variant — those are
-    # explicit "give me that old model" requests. Every other key maps to a cc
-    # *alias* (opus/sonnet/haiku/fable) which cc resolves to the latest model
-    # of that family, so a new release needs no edit here.
+    # Explicit version keys (4.x/5.x) stay pinned to a specific model — those
+    # are explicit "give me that exact model" requests. Every other key maps
+    # to a cc *alias* (opus/sonnet/haiku/fable) which cc resolves to the
+    # latest model of that family, so a new release needs no edit here.
     "4.6": "claude-opus-4-6[1m]",
     "4.7": "claude-opus-4-7[1m]",
     "4.8": "claude-opus-4-8[1m]",
+    "5.1": "claude-fable-5-1",
     "5": "fable",
     "5o": "opus",
     "5f": "fable",

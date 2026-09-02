@@ -43,11 +43,12 @@ def test_resolve_alias_haiku() -> None:
 def test_resolve_alias_fable() -> None:
     assert resolve_model("5") == "fable"
     assert resolve_model("fable") == "fable"
+    assert resolve_model("5.1") == "claude-fable-5-1"
 
 
 def test_no_alias_target_is_a_pinned_current_model() -> None:
-    """Only the explicit legacy version keys may pin a canonical id."""
-    floating = {k: v for k, v in MODEL_ALIASES.items() if not k.startswith("4.")}
+    """Only explicit dotted version keys may pin a canonical id."""
+    floating = {k: v for k, v in MODEL_ALIASES.items() if "." not in k}
     assert set(floating.values()) == {"opus", "sonnet", "haiku", "fable"}
 
 
