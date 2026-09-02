@@ -40,7 +40,7 @@ Runtimes: bridge (launchd, single process) · cc subprocess (persistent, swap = 
 - commands/registry.py — dispatch hub: slash → digit → mm± → alias → forward.
 - commands/handlers.py — CommandContext closures (swap/close/forget/respawn/replay/audit).
 - commands/messages.py — t(key, style) cn/en ack pairs. Only path for user-facing acks.
-- commands/aliases.py — MODEL_ALIASES (5/fable/opus/sonnet/haiku).
+- commands/aliases.py — MODEL_ALIASES (5.1/5/fable/opus/sonnet/haiku; dotted keys pin exact ids).
 - commands/marrow_audit.py — mm-/mm+ direct sqlite to marrow.db.
 - shell_state.py — per-shell cortex ledger `<state_dir>/<shell>.json` (flock + atomic replace). Protocol shared with marrow/cortex, code never imported across repos.
 - breaker.py — circuit breaker, bridge side (§9.1).
