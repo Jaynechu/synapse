@@ -51,7 +51,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SEND_GAP_SEC = 0.05
-_MAX_CONSECUTIVE_DEATHS = 3
 _FLUSH_INTERVAL_SEC = 0.5
 # Extra seconds added on top of a 429 RetryAfter before retrying the send.
 _RETRY_AFTER_MARGIN_SEC = 0.5
@@ -364,7 +363,7 @@ class TgLoop:
         )
 
     def ensure_provider(self) -> None:
-        if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+        if self._death_count >= self._cfg.max_consecutive_deaths:
             self._provider = None
             return
         if self._provider is None or not self._provider.is_alive():
@@ -374,10 +373,11 @@ class TgLoop:
 
     def _respawn(self) -> None:
         self._death_count += 1
-        if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+        if self._death_count >= self._cfg.max_consecutive_deaths:
             logger.error("provider died %d times, backing off", self._death_count)
             return
-        logger.warning("provider dead — respawning (%d/%d)", self._death_count, _MAX_CONSECUTIVE_DEATHS)
+        logger.warning("provider dead — respawning (%d/%d)", self._death_count,
+                       self._cfg.max_consecutive_deaths)
         try:
             if self._provider:
                 self._provider.cancel()
@@ -1139,7 +1139,7 @@ class TgLoop:
                                 return
                             logger.error("provider error (attempt %d/2): %s", attempt + 1, e)
                             self._respawn()
-                            if self._death_count >= _MAX_CONSECUTIVE_DEATHS:
+                            if self._death_count >= self._cfg.max_consecutive_deaths:
                                 logger.error("provider gave up after %d consecutive deaths", self._death_count)
                                 self._provider = None
                                 await self._send_provider_notice(bot, chat_id, "provider.gave_up")

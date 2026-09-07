@@ -51,7 +51,7 @@ for CH in "${CHANNELS[@]}"; do
     mkdir -p "${CONF_DIR}"
 
     if [[ ! -f "${CONF_DIR}/config.toml" ]]; then
-        cp "${BRIDGE_HOME}/config.toml.example" "${CONF_DIR}/config.toml"
+        printf '# Only the values that differ from synapse_core/config.default.toml.\n# python -m synapse_core.config --defaults\n' > "${CONF_DIR}/config.toml"
         echo "[${CH}] config created at ${CONF_DIR}/config.toml — fill in your values"
     else
         echo "[${CH}] config already exists, skipping"

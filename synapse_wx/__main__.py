@@ -20,7 +20,7 @@ from .media import outbound as media_outbound
 from synapse_core.commands import marrow_audit
 from synapse_core.commands import messages as cmd_messages
 from synapse_core.commands.registry import CommandContext, Registry
-from .config import DEFAULT_CC_CWD, load_config
+from .config import load_config
 from synapse_core.debounce import InboundBuffer
 from synapse_core.health import HealthGate
 from synapse_core.logging_config import configure_logging
@@ -201,16 +201,17 @@ def main() -> int:
     )
     buffer = InboundBuffer()
 
-    # cc_cwd resolution (in order): persisted state.cc_cwd if path still
-    # exists → cfg.cc_cwd → DEFAULT_CC_CWD. /cwd flips state.cc_cwd then
-    # triggers respawn.
+    # cc_cwd resolution (in order): persisted state.cc_cwd if the path still
+    # exists → [provider].cc_cwd. /cwd flips state.cc_cwd then triggers a
+    # respawn.
     if state.cc_cwd is None or not os.path.isdir(state.cc_cwd):
-        state.cc_cwd = cfg.cc_cwd or DEFAULT_CC_CWD
+        state.cc_cwd = cfg.cc_cwd_path()
 
     def provider_factory(
         model: str | None = None, resume_sid: str | None = None
     ) -> ClaudeCodeProvider:
         return ClaudeCodeProvider(
+            binary=cfg.cc_path,
             model=model if model is not None else state.model,
             resume_sid=resume_sid,
             cwd=state.cc_cwd,
@@ -250,7 +251,7 @@ def main() -> int:
     main_loop_box["loop"] = main_loop
 
     marrow_db_expanded = (
-        os.path.expanduser(cfg.marrow_db_path) if cfg.marrow_db_path else ""
+        os.path.expanduser(cfg.marrow_db) if cfg.marrow_db else ""
     )
 
     def _audit_writer(kind: str, sid: str, status: str) -> None:

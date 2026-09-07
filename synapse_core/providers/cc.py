@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from synapse_core.config import default_value
+
 from .base import Provider
 from .errors import ProviderDeadError, ProviderSpawnError, ProviderStallError
 
@@ -50,18 +52,6 @@ _USAGE_KEYS = (
     "cache_read_input_tokens",
     "cache_creation_input_tokens",
 )
-
-# Liveness defaults (seconds of CONTINUOUS silence between stream events).
-# Overridable per bridge via config.toml; bridges pass explicit values.
-_DEFAULT_IDLE_SOFT_S = 60.0
-_DEFAULT_IDLE_HARD_S = 300.0
-
-# Per-turn OUTPUT token brake: cancel a runaway turn (e.g. a huge thinking
-# spiral) instead of burning quota for 15 minutes. Overridable per bridge via
-# config.toml; 0 or negative disables. Counts ONLY newly produced output
-# tokens for the current turn — never input/cache figures (those reflect
-# window size and would false-trigger every turn).
-_DEFAULT_TURN_OUTPUT_CAP = 20000
 
 # Sentinel objects for the stdout reader queue: EOF = clean stream end,
 # an Exception instance = a read error surfaced to recv().
@@ -155,16 +145,16 @@ class ClaudeCodeProvider(Provider):
         resume_sid: str | None = None,
         cwd: str | None = None,
         extra_env: dict[str, str] | None = None,
-        binary: str = "claude",
+        binary: str = default_value("cc_path"),
         effort_level: str | None = None,
         *,
         channel: str,
         stderr_log: Path | None = None,
         system_prompts: list[str] = (),
         marrow_bridge: bool = False,
-        idle_soft_s: float = _DEFAULT_IDLE_SOFT_S,
-        idle_hard_s: float = _DEFAULT_IDLE_HARD_S,
-        turn_output_cap: int = _DEFAULT_TURN_OUTPUT_CAP,
+        idle_soft_s: float = default_value("idle_soft_s"),
+        idle_hard_s: float = default_value("idle_hard_s"),
+        turn_output_cap: int = default_value("turn_output_cap"),
     ) -> None:
         self.model = model
         self.resume_sid = resume_sid

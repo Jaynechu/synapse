@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from synapse_core import session_lock
+from synapse_core.config import default_value
 
 from .tracker import SessionTracker
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_IDLE_THRESHOLD_SEC = 6 * 3600
 DEFAULT_SCAN_INTERVAL_SEC = 30 * 60
-DEFAULT_CC_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+DEFAULT_CC_PROJECTS_DIR = Path(default_value("cc_projects_dir")).expanduser()
 
 
 class IdleFireLoop:

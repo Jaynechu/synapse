@@ -1,130 +1,25 @@
-"""TOML config loader for synapse-tg."""
+"""Telegram view over the shared defaults table (synapse_core/config.py)."""
 
 from __future__ import annotations
 
 import logging
 import tomllib
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from synapse_core import upstream
+from synapse_core.config import USER_CONFIG_PATHS, ConfigView
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "synapse-tg" / "config.toml"
-DEFAULT_LOG_PATH = Path.home() / ".config" / "marrow" / "logs" / "synapse-tg" / "synapse-tg.log"
+DEFAULT_CONFIG_PATH = USER_CONFIG_PATHS["tg"]
+
+# cortex owns the free-round cadence; [cortex].shell_idle_min in a user file
+# pins it, otherwise it is read from here.
+CORTEX_IDLE_KEY = "wake.default_sleep_min"
 
 
-@dataclass
-class TgConfig:
-    bot_token: str = ""
-    cc_path: str = "claude"
-    data_dir: Path = field(default_factory=lambda: Path.home() / ".config" / "synapse-tg")
-    # [storage] log_file — empty falls back to DEFAULT_LOG_PATH. A second bot
-    # instance points this at its own file so the two never share a handler.
-    log_file: str = ""
-    marrow_bridge: bool = False
-    cwd: Path | None = None
-    # Seeds BridgeState.model on a bridge that has never been switched. A
-    # persisted /model choice wins over it; empty = let cc pick its own.
-    default_model: str = ""
-
-    # Provider liveness: seconds of continuous stream silence before the soft
-    # liveness check (poll process) and the hard idle kill (stall -> respawn).
-    idle_soft_s: float = 60.0
-    idle_hard_s: float = 300.0
-    # Per-turn OUTPUT token brake: interrupt a runaway turn instead of burning
-    # quota. 0 or negative disables.
-    turn_output_cap: int = 20000
-    # Storm guard: more than this many unsolicited (background-task) turns
-    # delivered within one lock-hold raises a marrow alert. 0 disables.
-    unsolicited_storm_cap: int = 5
-    user_name: str = "user"
-    assistant_name: str = "assistant"
-
-    # Session lifecycle
-    cc_projects_dir: str = "~/.claude/projects"
-
-    # Marrow integration (all empty = marrow disabled)
-    marrow_db: str = "~/.config/marrow/marrow.db"
-    session_record_command: str = ""
-    session_get_model_command: str = ""
-    session_cwd_command: str = ""
-    session_get_effort_command: str = ""
-    session_created_command: str = ""
-    session_list_recent_command: str = ""
-
-    # Outbound send resilience
-    send_retry_max: int = 2
-    retry_after_cap_sec: float = 60.0
-
-    # HTTPX transport timeouts (seconds) for the PTB Bot. get_updates uses a
-    # separate request whose read timeout must stay above the long-poll timeout.
-    http_connect_timeout_s: float = 10.0
-    http_read_timeout_s: float = 30.0
-    http_write_timeout_s: float = 30.0
-    http_pool_timeout_s: float = 10.0
-
-    # Target chat for anything the bridge sends on its own initiative.
-    chat_id: int | None = None
-
-    # Inbound sender whitelist (by Telegram user id). Empty = accept-all (open
-    # door, logged loudly at startup). Explicit allowed_user_ids wins over the
-    # chat_id fallback (private chats: chat_id == user_id).
-    allowed_user_ids: list = field(default_factory=list)
-
-    # Empty = follow the OS timezone; set an IANA name to pin it.
-    timezone: str = ""
-
-    # Cortex shell (T9). Active iff shell_enabled AND shell_id is a member of
-    # marrow's [cortex].shells (T7: single source, see shell_active()).
-    # shell_enabled=false makes this instance a plain relay regardless of
-    # shell_id — required for secondary bot instances, whose default shell_id
-    # ("tg") would otherwise claim the primary's socket and ledger. Inactive =
-    # no scheduler task, no silence cycle, no MARROW_CORTEX env.
-    shell_enabled: bool = True
-    shell_id: str = "tg"
-    # Ledger shared with marrow (<dir>/<shell>.json) + kick socket. Keep the
-    # socket path SHORT: macOS caps an AF_UNIX path at 104 bytes.
-    shell_state_dir: str = "~/.config/marrow/state/shells"
-    shell_socket: str = "~/.config/marrow/state/shells/tg.sock"
-    # Rendered in the 🔄 transfer receipt when the peer shell cannot be read
-    # off marrow's [cortex].shells.
-    shell_peer_fallback: str = "?"
-    # Minutes of user silence before one rendered note turn is fed in.
-    # Cross-repo contract: keep in step with cortex's [watchdog].silent_max_min
-    # (the cli shell's free-round cycle), also 55.
-    shell_idle_min: float = 55.0
-    # argv rendering the wakeup note on stdout, e.g.
-    # ["/path/cortex/.venv/bin/python", "-m", "cortex.note_render"].
-    # Empty = the silence cycle logs and skips every round.
-    shell_note_render_cmd: list = field(default_factory=list)
-    shell_note_render_timeout_s: float = 20.0
-    # Consecutive render failures that raise one alert (a broken renderer
-    # silently mutes every autonomous round). 0 = never alert.
-    shell_note_render_alert_after: int = 3
-    # Machine tag opening a fed turn (must be a marrow [cortex].machine_markers
-    # member, else the fed note reads as a real user message).
-    shell_note_tag: str = "⏳ [NEW ROUND]"
-    # Context occupancy at which the resident is asked to wrap up and is then
-    # respawned fresh. 0 disables the fuse.
-    shell_fuse_tokens: int = 300000
-    shell_fuse_tag: str = "⚙️ [FUSE]"
-    shell_fuse_prompt_text: str = (
-        "Session context fused. Update handoff before rotate. Add todo if any. "
-        "lie_down(rotate=True)"
-    )
-    # Visible context broadcast: once occupancy reaches context_notify_start,
-    # then again every context_notify_step above it, the chat gets one plain
-    # "🗃️ Context <N>k" line. One message per tier per window (watermark in the
-    # ledger, cleared on fold). Disable with context_notify = false.
-    shell_context_notify: bool = True
-    shell_context_notify_start: int = 150000
-    shell_context_notify_step: int = 50000
-
-    # /cwd presets from [cwd_presets] — display name -> absolute path
-    cwd_presets: dict = field(default_factory=dict)
-
-    # Ack string overrides from [ack_overrides] — key -> {style -> template}
-    ack_overrides: dict = field(default_factory=dict)
+class TgConfig(ConfigView):
+    CHANNEL = "tg"
 
     def shell_socket_path(self) -> Path:
         return Path(self.shell_socket).expanduser()
@@ -135,9 +30,28 @@ class TgConfig:
         protocol files marrow, cortex and this bridge all read."""
         return Path(self.marrow_db).expanduser().parent
 
+    def idle_window_min(self) -> float:
+        """Minutes of user silence before one rendered note turn is fed in.
+
+        Owned by cortex ([wake].default_sleep_min) so both shells run the same
+        free-round cadence. An explicit [cortex].shell_idle_min in the user
+        file wins; an unreachable cortex falls back to the defaults table."""
+        if not self.is_explicit("shell_idle_min"):
+            try:
+                value = upstream.value(upstream.cortex_config(), CORTEX_IDLE_KEY)
+            except upstream.UpstreamError as e:
+                logger.warning("cortex %s unreadable (%s) — using the packaged "
+                               "fallback %s", CORTEX_IDLE_KEY, e, self.shell_idle_min)
+            else:
+                if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                    return float(value)
+                logger.warning("cortex %s is %r — using the packaged fallback %s",
+                               CORTEX_IDLE_KEY, value, self.shell_idle_min)
+        return float(self.shell_idle_min)
+
     def _cortex_shells(self) -> list[str]:
-        """marrow's [cortex].shells, lowercased (T7: single source, resolved
-        via marrow_config_dir — same file cortex's shell_enabled() reads).
+        """marrow's [cortex].shells, lowercased (single source, resolved via
+        marrow_config_dir — same file cortex's shell_enabled() reads).
         Missing/unreadable marrow config or missing key -> empty list."""
         p = self.marrow_config_dir() / "config.toml"
         try:
@@ -171,169 +85,13 @@ class TgConfig:
         [chat_id] if set (private chats: chat_id == user_id), else empty
         (accept-all)."""
         if self.allowed_user_ids:
-            return list(self.allowed_user_ids)
+            return [x for x in self.allowed_user_ids
+                    if isinstance(x, int) and not isinstance(x, bool)]
         if self.chat_id is not None:
             return [self.chat_id]
         return []
 
 
 def load_config(path: Path | None = None) -> TgConfig:
-    """Load config.toml; return defaults if absent or malformed."""
-    p = Path(path) if path is not None else DEFAULT_CONFIG_PATH
-    if not p.is_file():
-        return TgConfig()
-    try:
-        data = tomllib.loads(p.read_bytes().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
-        logger.warning("config load failed (%s); using defaults", e)
-        return TgConfig()
-
-    cfg = TgConfig()
-    bot = data.get("bot") or {}
-    if isinstance(bot, dict):
-        if isinstance(bot.get("token"), str):
-            cfg.bot_token = bot["token"]
-
-    tg = data.get("tg") or {}
-    if isinstance(tg, dict):
-        cid = tg.get("chat_id")
-        if isinstance(cid, int) and not isinstance(cid, bool):
-            cfg.chat_id = cid
-        aui = tg.get("allowed_user_ids")
-        if isinstance(aui, list):
-            cfg.allowed_user_ids = [
-                x for x in aui if isinstance(x, int) and not isinstance(x, bool)
-            ]
-
-    cortex = data.get("cortex") or {}
-    if isinstance(cortex, dict):
-        if isinstance(cortex.get("shell_enabled"), bool):
-            cfg.shell_enabled = cortex["shell_enabled"]
-        for key, attr in (
-            ("shell_id", "shell_id"),
-            ("shell_state_dir", "shell_state_dir"),
-            ("shell_socket", "shell_socket"),
-            ("shell_note_tag", "shell_note_tag"),
-            ("shell_peer_fallback", "shell_peer_fallback"),
-            ("fuse_tag", "shell_fuse_tag"),
-            ("fuse_prompt_text", "shell_fuse_prompt_text"),
-        ):
-            v = cortex.get(key)
-            if isinstance(v, str) and v.strip():
-                setattr(cfg, attr, v)
-        im = cortex.get("shell_idle_min")
-        if isinstance(im, (int, float)) and not isinstance(im, bool) and im > 0:
-            cfg.shell_idle_min = float(im)
-        rc = cortex.get("note_render_cmd")
-        if isinstance(rc, list):
-            cfg.shell_note_render_cmd = [str(x) for x in rc]
-        rt = cortex.get("note_render_timeout_s")
-        if isinstance(rt, (int, float)) and not isinstance(rt, bool) and rt > 0:
-            cfg.shell_note_render_timeout_s = float(rt)
-        ra = cortex.get("note_render_alert_after")
-        if isinstance(ra, int) and not isinstance(ra, bool) and ra >= 0:
-            cfg.shell_note_render_alert_after = ra
-        ft = cortex.get("fuse_tokens")
-        if isinstance(ft, int) and not isinstance(ft, bool) and ft >= 0:
-            cfg.shell_fuse_tokens = ft
-        cn = cortex.get("context_notify")
-        if isinstance(cn, bool):
-            cfg.shell_context_notify = cn
-        for key, attr in (("context_notify_start", "shell_context_notify_start"),
-                          ("context_notify_step", "shell_context_notify_step")):
-            v = cortex.get(key)
-            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
-                setattr(cfg, attr, v)
-
-    core = data.get("core") or {}
-    if isinstance(core, dict) and isinstance(core.get("timezone"), str):
-        cfg.timezone = core["timezone"]
-
-    provider = data.get("provider") or {}
-    if isinstance(provider, dict):
-        if isinstance(provider.get("cc_path"), str):
-            cfg.cc_path = provider["cc_path"]
-        if isinstance(provider.get("cwd"), str):
-            cfg.cwd = Path(provider["cwd"])
-        if isinstance(provider.get("marrow_bridge"), bool):
-            cfg.marrow_bridge = provider["marrow_bridge"]
-        soft = provider.get("idle_soft_s")
-        if isinstance(soft, (int, float)) and not isinstance(soft, bool) and soft > 0:
-            cfg.idle_soft_s = float(soft)
-        hard = provider.get("idle_hard_s")
-        if isinstance(hard, (int, float)) and not isinstance(hard, bool) and hard > 0:
-            cfg.idle_hard_s = float(hard)
-        cap = provider.get("turn_output_cap")
-        if isinstance(cap, int) and not isinstance(cap, bool):
-            cfg.turn_output_cap = cap
-        storm = provider.get("unsolicited_storm_cap")
-        if isinstance(storm, int) and not isinstance(storm, bool) and storm >= 0:
-            cfg.unsolicited_storm_cap = storm
-
-    storage = data.get("storage") or {}
-    if isinstance(storage, dict):
-        if isinstance(storage.get("data_dir"), str):
-            cfg.data_dir = Path(storage["data_dir"])
-        if isinstance(storage.get("log_file"), str):
-            cfg.log_file = storage["log_file"]
-
-    provider_model = provider.get("default_model")
-    if isinstance(provider_model, str) and provider_model:
-        cfg.default_model = provider_model
-
-    persona = data.get("persona") or {}
-    if isinstance(persona, dict):
-        if isinstance(persona.get("user_name"), str):
-            cfg.user_name = persona["user_name"]
-        if isinstance(persona.get("assistant_name"), str):
-            cfg.assistant_name = persona["assistant_name"]
-
-    marrow = data.get("marrow") or {}
-    if isinstance(marrow, dict):
-        if isinstance(marrow.get("db"), str):
-            cfg.marrow_db = marrow["db"]
-        if isinstance(marrow.get("session_record_command"), str):
-            cfg.session_record_command = marrow["session_record_command"]
-        if isinstance(marrow.get("session_get_model_command"), str):
-            cfg.session_get_model_command = marrow["session_get_model_command"]
-        if isinstance(marrow.get("session_cwd_command"), str):
-            cfg.session_cwd_command = marrow["session_cwd_command"]
-        if isinstance(marrow.get("session_get_effort_command"), str):
-            cfg.session_get_effort_command = marrow["session_get_effort_command"]
-        if isinstance(marrow.get("session_created_command"), str):
-            cfg.session_created_command = marrow["session_created_command"]
-        if isinstance(marrow.get("session_list_recent_command"), str):
-            cfg.session_list_recent_command = marrow["session_list_recent_command"]
-
-    send = data.get("send") or {}
-    if isinstance(send, dict):
-        if isinstance(send.get("send_retry_max"), int) and not isinstance(send.get("send_retry_max"), bool):
-            cfg.send_retry_max = send["send_retry_max"]
-        if isinstance(send.get("retry_after_cap_sec"), (int, float)) and not isinstance(send.get("retry_after_cap_sec"), bool):
-            cfg.retry_after_cap_sec = float(send["retry_after_cap_sec"])
-        for key, attr in (
-            ("http_connect_timeout_s", "http_connect_timeout_s"),
-            ("http_read_timeout_s", "http_read_timeout_s"),
-            ("http_write_timeout_s", "http_write_timeout_s"),
-            ("http_pool_timeout_s", "http_pool_timeout_s"),
-        ):
-            v = send.get(key)
-            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
-                setattr(cfg, attr, float(v))
-
-    if isinstance(provider.get("cc_projects_dir"), str):
-        cfg.cc_projects_dir = provider["cc_projects_dir"]
-
-    presets = data.get("cwd_presets") or {}
-    if isinstance(presets, dict):
-        cfg.cwd_presets = {str(k): str(v) for k, v in presets.items() if isinstance(v, str)}
-
-    ack = data.get("ack_overrides") or {}
-    if isinstance(ack, dict):
-        cfg.ack_overrides = {
-            str(k): {str(s): str(t) for s, t in v.items() if isinstance(t, str)}
-            for k, v in ack.items()
-            if isinstance(v, dict)
-        }
-
-    return cfg
+    """Defaults table with ~/.config/synapse-tg/config.toml merged over it."""
+    return TgConfig(Path(path) if path is not None else DEFAULT_CONFIG_PATH)

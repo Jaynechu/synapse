@@ -1,0 +1,198 @@
+# The defaults table for every synapse channel.
+#
+# This file is the ONLY place a config value may be written down. Channel user
+# files (~/.config/synapse-tg/config.toml, ~/.config/synapse-wx/config.toml)
+# are deep-merged over it and should carry differences only.
+#
+# Section/key names here are the ones a user file uses. Attribute names the
+# code reads are declared in synapse_core/config.py FIELDS, together with which
+# channel(s) consume each key.
+#
+# Inspect: python -m synapse_core.config --defaults
+#          python -m synapse_core.config --resolved --channel tg
+
+[core]
+# Empty = follow the OS timezone; set an IANA name to pin it.
+timezone = ""
+
+# ── Provider (shared) ─────────────────────────────────
+[provider]
+cc_path = "claude"
+# (tg) Default cwd for claude sessions started by the bridge. Empty = the
+# process cwd.
+cwd = ""
+# (wx) cwd the cc subprocess spawns in. Aligns wx + cli project_slug so cli's
+# native /resume picker sees wx sessions.
+cc_cwd = "~"
+# (tg) Enable marrow memory integration (requires marrow install).
+marrow_bridge = false
+# Where claude stores its project data (transcript jsonl per project).
+cc_projects_dir = "~/.claude/projects"
+# Seeds BridgeState.model on a bridge that has never been switched. A persisted
+# /model choice wins over it; empty = let cc pick its own.
+default_model = ""
+# (wx) Model /clear lands on (canonical id, "[1m]" suffix kept). Empty = no
+# fixed default, /clear follows whatever model the session was already on.
+clear_default_model = ""
+# Provider liveness: seconds of continuous stream silence before the soft
+# liveness check (poll process) and the hard idle kill (stall -> respawn).
+idle_soft_s = 60.0
+idle_hard_s = 300.0
+# Per-turn OUTPUT token brake: interrupt a runaway turn instead of burning
+# quota. Counts only newly produced output tokens. 0 or negative disables.
+turn_output_cap = 20000
+# Storm guard: more than this many unsolicited (background-task) turns
+# delivered within one lock-hold raises a bridge_turn_storm alert. 0 disables.
+unsolicited_storm_cap = 5
+# (tg) Consecutive provider deaths before the bridge stops respawning.
+max_consecutive_deaths = 3
+
+# ── Storage (tg) ──────────────────────────────────────
+[storage]
+# Runtime data directory. A second bot instance points this at its own dir.
+data_dir = "~/.config/synapse-tg"
+# A second bot instance points this at its own file so the two never share a
+# log handler.
+log_file = "~/.config/marrow/logs/synapse-tg/synapse-tg.log"
+
+# ── Persona (shared) ──────────────────────────────────
+[persona]
+# Display names in messages.
+user_name = "user"
+assistant_name = "assistant"
+
+# ── Marrow (shared) ───────────────────────────────────
+[marrow]
+# marrow.db — sessions table, audit_log, and (via its parent) the cross-repo
+# protocol files breaker.json / fuse_events.json / duty.json. Empty = the
+# bridge runs without marrow integration.
+db = "~/.config/marrow/marrow.db"
+# Sessions table writers/readers. Empty = no row written; /resume falls back to
+# a jsonl grep under cc_projects_dir. Format vars: {sid} {model} {channel}
+# {effort}.
+session_record_command = "mw add-session --sid {sid} --model {model} --channel {channel} --effort {effort}"
+session_get_model_command = "mw get-session-model --sid {sid}"
+session_cwd_command = "mw get-session-cwd --sid {sid}"
+session_get_effort_command = "mw get-session-effort --sid {sid}"
+session_created_command = "mw get-session-created --sid {sid}"
+# Recent-session picker for /resume (takes no sid).
+session_list_recent_command = "mw list-recent-sessions --limit 10"
+
+# ── Outbound send ─────────────────────────────────────
+[send]
+# (tg) Max attempts per outbound bubble on a 429 RetryAfter before giving up.
+send_retry_max = 2
+# (tg) If Telegram's RetryAfter exceeds this many seconds, skip the wait and
+# treat the send as failed instead of stalling the bridge.
+retry_after_cap_sec = 60.0
+# (tg) HTTPX transport timeouts for the Telegram Bot. The read timeout must
+# stay above the long-poll timeout (10s) so a poll never times out early.
+http_connect_timeout_s = 10.0
+http_read_timeout_s = 30.0
+http_write_timeout_s = 30.0
+http_pool_timeout_s = 10.0
+# (wx) On a business rejection (ret!=0 = iLink send count quota exhausted),
+# wait this long for the quota window to roll over, then retry the chunk once.
+quota_wait_sec = 65.0
+
+# ── Telegram ──────────────────────────────────────────
+[bot]
+# Get from @BotFather on Telegram.
+token = ""
+
+[tg]
+# Chat the bridge sends to on its own initiative (breaker notices, context
+# broadcasts, cortex shell rounds). 0 = no outbox, those are dropped.
+chat_id = 0
+# Inbound sender whitelist by Telegram user id. Empty = fall back to [tg].
+# chat_id, and if that is unset too, accept-all (logged loudly at startup).
+allowed_user_ids = []
+
+# ── Cortex shell (tg) ─────────────────────────────────
+# Active iff shell_enabled AND shell_id is a member of marrow's
+# [cortex].shells. Inactive = plain relay resident (no scheduler, no silence
+# cycle, no cortex env).
+[cortex]
+# Hard off-switch for this instance. Set false on any secondary bot instance:
+# shell_id defaults to "tg", which IS in marrow's list, so a second instance
+# left on would race the primary for the same socket and ledger.
+shell_enabled = true
+# Shell id handed to marrow as MARROW_CORTEX.
+shell_id = "tg"
+# Ledger shared with marrow: <dir>/<shell>.json. Keep the socket path SHORT —
+# macOS caps an AF_UNIX path at 104 bytes. marrow's [cortex].shell_socket must
+# match.
+shell_state_dir = "~/.config/marrow/state/shells"
+shell_socket = "~/.config/marrow/state/shells/tg.sock"
+# Rendered in the transfer receipt when the peer shell cannot be read off
+# marrow's [cortex].shells.
+shell_peer_fallback = "?"
+# Minutes of user silence before one rendered note turn is fed in.
+# OWNER: cortex, [wake].default_sleep_min — resolved live at runtime via
+# `python -m cortex.ctl config --resolved`. The value below is only the
+# offline fallback for a machine with no reachable cortex install; setting it
+# in a user file pins it and skips the cortex lookup.
+shell_idle_min = 55.0
+# argv rendering the wakeup note on stdout. Empty = the silence cycle logs and
+# skips every round. Pass `--shell <shell_id>` so cortex drops THIS shell's own
+# channel from the note's Replay section.
+# e.g. ["~/CC-Lab/cortex/.venv/bin/python", "-m", "cortex.note_render", "--mirror", "--shell", "tg"]
+note_render_cmd = []
+note_render_timeout_s = 20.0
+# Consecutive render failures that raise one alert (a broken renderer mutes
+# every autonomous round silently). 0 = never alert.
+note_render_alert_after = 3
+# Machine tag opening a fed turn — must be a marrow [cortex].machine_markers
+# member, else the fed note reads as a real user message.
+shell_note_tag = "⏳ [NEW ROUND]"
+# Context occupancy at which the resident is asked to wrap up and is then
+# respawned fresh. 0 disables the fuse.
+fuse_tokens = 300000
+fuse_tag = "⚙️ [FUSE]"
+fuse_prompt_text = "Session context fused. Update handoff before rotate. Add todo if any. lie_down(rotate=True)"
+# Visible context broadcast: one plain "Context <N>k" line to the chat when
+# occupancy reaches context_notify_start, then every context_notify_step above
+# it (once per tier per window). false = never announce.
+context_notify = true
+context_notify_start = 150000
+context_notify_step = 50000
+
+# ── WeChat ────────────────────────────────────────────
+[user]
+# Your wxid — run `python -m synapse_wx.ilink` to find it after QR login.
+target_wxid = ""
+
+[loop]
+poll_interval_sec = 1.0
+# Spacing between outbound reply bubbles. A wider gap avoids tripping the iLink
+# rate limit (ret=-2) on multi-bubble turns.
+bubble_gap_sec = 0.8
+# Outbound edge bubble cap: adjacent text bubbles are merged before the send
+# loop until the turn fits within this many bubbles. Main defense against the
+# iLink ~10-per-minute count quota.
+bubble_cap = 10
+
+[media]
+# (wx) iCloud outbox for outbound files exceeding the CDN ceiling.
+icloud_outbox = "~/Documents/CC-Drop"
+
+[alerts]
+# (wx) Command to pipe alerts into marrow. Empty = no alert rows.
+marrow_repo_cmd = ""
+
+[debug]
+# (wx) Dump raw getupdates payloads until this local date (inclusive,
+# "YYYY-MM-DD"). Empty = off. Auto-expires after the date.
+raw_poll_log_until = ""
+
+# Named shortcuts for /cwd N. Key = name shown in the menu, value = absolute
+# path. Document order = the digit the user types (first entry is 1).
+[cwd_presets]
+
+# Override any bridge ack string. Key = message key (see
+# synapse_core/commands/messages.py MESSAGES), value = {style = "text"}.
+# Supports the {placeholder} format vars of the original template.
+# [ack_overrides."provider.dead"]
+# cn = "..."
+# en = "Provider down."
+[ack_overrides]
