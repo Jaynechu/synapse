@@ -145,7 +145,7 @@ class ClaudeCodeProvider(Provider):
         resume_sid: str | None = None,
         cwd: str | None = None,
         extra_env: dict[str, str] | None = None,
-        binary: str = "claude",
+        binary: str = default_value("cc_path"),
         effort_level: str | None = None,
         *,
         channel: str,

@@ -42,7 +42,7 @@
 - Persistent across restarts. State: `~/.config/marrow/breaker.json` ∪ `duty.json` (MAP.md §9.1).
 - Duty: `/ct-duty cli|tg|off|all` (`cortex.ctl duty <mode>`) — that shell runs, the other is held; clears the breaker first.
 - Breaker plumbing: `cortex.ctl pause|resume [--shell cli|tg]` (pause scopes merge), `cortex.ctl wake [--shell]` = clear + kick. Show: `cortex.ctl status`.
-- Auto-trips after `[cortex.breaker].fuse_threshold` fuses within `window_hours` (marrow config.toml).
+- Auto-trips after `[cortex.breaker].fuse_threshold` fuses within `window_hours` (marrow config.toml, or `mw config --resolved` for anything it leaves unset).
 
 ## Hold words
 

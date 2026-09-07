@@ -211,6 +211,7 @@ def main() -> int:
         model: str | None = None, resume_sid: str | None = None
     ) -> ClaudeCodeProvider:
         return ClaudeCodeProvider(
+            binary=cfg.cc_path,
             model=model if model is not None else state.model,
             resume_sid=resume_sid,
             cwd=state.cc_cwd,

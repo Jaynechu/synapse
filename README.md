@@ -6,7 +6,7 @@ Channel-agnostic LLM bridge for Claude Code — Telegram + WeChat, with optional
 
 1. Fork + clone
 2. `pip install -e ".[tg]"` (or `uv sync --extra tg`)
-3. `cp config.toml.example ~/.config/synapse-tg/config.toml`
+3. `mkdir -p ~/.config/synapse-tg && printf '[bot]\ntoken = ""\n' > ~/.config/synapse-tg/config.toml`
 4. Fill in `[bot] token` (from @BotFather)
 5. `python -m synapse_tg`
 
@@ -15,7 +15,7 @@ Channel-agnostic LLM bridge for Claude Code — Telegram + WeChat, with optional
 1. Fork + clone
 2. `pip install -e ".[wx]"`
 3. `python -c "from synapse_wx.ilink import ILinkClient; ILinkClient().login()"` — scan QR, note your wxid
-4. `cp config.toml.example ~/.config/synapse-wx/config.toml`
+4. `mkdir -p ~/.config/synapse-wx && printf '[user]\ntarget_wxid = ""\n' > ~/.config/synapse-wx/config.toml`
 5. Fill in `[user] target_wxid`
 6. `python -m synapse_wx`
 
@@ -26,12 +26,30 @@ Requires [marrow](https://github.com/Jaynechu/marrow) installed separately.
 
 ## Configuration
 
-`config.toml.example` — all sections annotated. Key sections:
+`synapse_core/config.default.toml` is the defaults table — every key, annotated,
+in one file. A channel config (`~/.config/synapse-<channel>/config.toml`) is
+deep-merged over it, so it only needs the values that differ from the defaults.
 
-- `[provider]` — cc path, cwd, marrow toggle
+```sh
+python -m synapse_core.config --defaults              # the table, verbatim
+python -m synapse_core.config --resolved --channel tg # table + your file, as the code reads it
+```
+
+`--resolved` marks every line your own file set with `# user`; unmarked lines
+are defaults and can be deleted from your file.
+
+Key sections:
+
+- `[provider]` — cc path, cwd, projects dir, marrow toggle, liveness + storm caps
 - `[persona]` — user/assistant display names
 - `[cwd_presets]` — named shortcuts for `/cwd N` (key = menu label, order = digit)
-- `[marrow]` — db path + sessionend command template
+- `[marrow]` — db path + the `mw` session command templates
+- `[cortex]` — tg cortex shell (see COMMANDS.md)
+
+Values owned by another repo are read from that repo, never copied here:
+`[cortex.breaker].*` comes from marrow (`mw config --resolved`) and the
+free-round cadence from cortex (`cortex.ctl config --resolved`,
+`[wake].default_sleep_min`).
 
 ## Commands
 
