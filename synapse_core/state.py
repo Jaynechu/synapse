@@ -56,7 +56,7 @@ class BridgeState:
     # Snapshot of rows from the last /resume picker so a delayed digit reply
     # resolves against the SAME list the user saw, not a re-queried one.
     picker_rows: list[dict] = field(default_factory=list)
-    # /cwd — current cwd cc subprocess spawns in. None = use DEFAULT_CC_CWD.
+    # /cwd — current cwd cc subprocess spawns in. None = use [provider].cc_cwd.
     # Persisted; survives bridge restart so the active project sticks.
     cc_cwd: str | None = None
 

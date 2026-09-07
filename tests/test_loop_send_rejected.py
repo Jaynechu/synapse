@@ -16,11 +16,8 @@ from synapse_core.providers.base import Provider
 from synapse_core.sessionend.tracker import SessionTracker
 from synapse_core.state import BridgeState
 from synapse_wx.config import Config
-from synapse_wx.loop import (
-    _DEFAULT_BUBBLE_CAP,
-    _DEFAULT_BUBBLE_GAP_SEC,
-    MainLoop,
-)
+from synapse_core.config import default_value
+from synapse_wx.loop import MainLoop
 
 
 class FakeClock:
@@ -191,7 +188,7 @@ def test_bubble_gap_default_when_no_cfg(env) -> None:
     ilink = RejectingILink(fail_from=99)
     provider = MultiBubbleProvider("a")
     loop, _ = _make_loop(env, ilink, provider, cfg=None)
-    assert loop._bubble_gap_sec == _DEFAULT_BUBBLE_GAP_SEC
+    assert loop._bubble_gap_sec == default_value("bubble_gap_sec")
 
 
 def test_bubble_cap_comes_from_config(env) -> None:
@@ -207,7 +204,7 @@ def test_bubble_cap_default_when_no_cfg(env) -> None:
     ilink = RejectingILink(fail_from=99)
     provider = MultiBubbleProvider("a")
     loop, _ = _make_loop(env, ilink, provider, cfg=None)
-    assert loop._bubble_cap == _DEFAULT_BUBBLE_CAP
+    assert loop._bubble_cap == default_value("bubble_cap")
 
 
 def test_over_cap_turn_merges_before_send(env) -> None:

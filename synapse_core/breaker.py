@@ -24,8 +24,9 @@ writes it, covers() only unions it in):
 The JSON file IS the cross-repo protocol. Protocol copied, never imported (same
 rule as synapse_core.shell_state): the cortex repo ships its own independent
 copy (cortex/breaker.py). Thresholds live ONLY in marrow's config.toml under
-[cortex.breaker], read directly here so the same number is never duplicated
-into the tg bridge config.
+[cortex.breaker]; this module reads them from there (and from `mw config
+--resolved` for anything that file leaves unset) so no threshold is ever
+duplicated into the bridge's own table.
 """
 
 from __future__ import annotations
@@ -39,6 +40,8 @@ import tomllib
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from synapse_core import upstream
+
 logger = logging.getLogger(__name__)
 
 BREAKER_FILE = "breaker.json"
@@ -49,15 +52,13 @@ SCOPE_ALL = "all"
 REASON_AUTO = "auto_fuse"
 REASON_MANUAL = "manual"
 
-DEFAULTS = {
-    "enabled": True,
-    "fuse_threshold": 2,
-    "window_hours": 24,
-    "trip_message": (
-        "Circuit breaker tripped: fuse #{count} within {hours}h. Cortex "
-        "autonomous activity paused ({scope}). Clear with ct-duty cli|tg|all."
-    ),
-}
+# Keys this bridge needs out of marrow's [cortex.breaker]. marrow owns every
+# value; nothing is copied here.
+SETTING_KEYS = ("enabled", "fuse_threshold", "window_hours", "trip_message")
+
+
+class BreakerConfigError(Exception):
+    """[cortex.breaker] could not be resolved from marrow."""
 
 
 # --- paths ---------------------------------------------------------------
@@ -74,22 +75,37 @@ def duty_path(config_dir: str | os.PathLike[str]) -> Path:
     return breaker_path(config_dir).with_name(DUTY_FILE)
 
 
+def _section(data: dict) -> dict:
+    section = (data.get("cortex") or {}).get("breaker")
+    return section if isinstance(section, dict) else {}
+
+
 def settings(config_dir: str | os.PathLike[str]) -> dict:
-    """[cortex.breaker] from marrow's config.toml, layered over DEFAULTS.
-    Missing file / section / key -> defaults. Never raises."""
-    out = dict(DEFAULTS)
+    """[cortex.breaker] from marrow's config.toml at `config_dir`, with any key
+    that file leaves unset filled from marrow's own resolved defaults
+    (`mw config --resolved`). marrow is the only owner — a key neither source
+    provides raises BreakerConfigError rather than inventing a value."""
+    out: dict = {}
     p = Path(config_dir).expanduser() / "config.toml"
     try:
         if p.is_file():
-            data = tomllib.loads(p.read_bytes().decode("utf-8"))
-            section = (data.get("cortex") or {}).get("breaker") or {}
-            if isinstance(section, dict):
-                for k in DEFAULTS:
-                    if k in section:
-                        out[k] = section[k]
+            out.update(_section(tomllib.loads(p.read_bytes().decode("utf-8"))))
     except (OSError, UnicodeDecodeError, ValueError, TypeError) as e:
-        logger.warning("breaker settings read failed (%s) — using defaults", e)
-    return out
+        logger.warning("breaker settings read failed (%s) — falling back to marrow", e)
+    missing = [k for k in SETTING_KEYS if k not in out]
+    if missing:
+        try:
+            resolved = _section(upstream.marrow_config())
+        except upstream.UpstreamError as e:
+            raise BreakerConfigError(
+                f"[cortex.breaker] {', '.join(missing)} unset in {p} and marrow "
+                f"is unreadable ({e})") from e
+        for k in missing:
+            if k not in resolved:
+                raise BreakerConfigError(
+                    f"[cortex.breaker].{k} missing from {p} and from marrow")
+            out[k] = resolved[k]
+    return {k: out[k] for k in SETTING_KEYS}
 
 
 # --- io ------------------------------------------------------------------
@@ -260,8 +276,9 @@ def record_fuse_and_maybe_trip(config_dir: str | os.PathLike[str], shell: str, *
         return count, None
     try:
         threshold = int(cfg["fuse_threshold"])
-    except (TypeError, ValueError):
-        threshold = int(DEFAULTS["fuse_threshold"])
+    except (TypeError, ValueError) as e:
+        raise BreakerConfigError(
+            f"[cortex.breaker].fuse_threshold is not a number: {cfg['fuse_threshold']!r}") from e
     if threshold <= 0 or count < threshold:
         return count, None
     return count, trip(config_dir, SCOPE_ALL, REASON_AUTO, now=now)

@@ -24,7 +24,7 @@ from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
 from synapse_core.usage import UsageClient
 
-from .config import DEFAULT_LOG_PATH, load_config
+from .config import load_config
 from .loop import TgLoop
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def main() -> int:
     # its own config (own token, data_dir, log file).
     config_path = os.environ.get("SYNAPSE_TG_CONFIG", "").strip()
     cfg = load_config(Path(config_path) if config_path else None)
-    configure_logging(Path(cfg.log_file) if cfg.log_file else DEFAULT_LOG_PATH)
+    configure_logging(Path(cfg.log_file).expanduser())
     if cfg.ack_overrides:
         messages.load_overrides(cfg.ack_overrides)
 

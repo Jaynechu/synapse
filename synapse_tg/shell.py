@@ -224,10 +224,15 @@ class ShellHost:
         if trip is None:
             return  # breaker cleared / manual pause — nothing to announce
         config_dir = self._cfg.marrow_config_dir()
-        count = await asyncio.to_thread(breaker.fuse_count, config_dir)
+        try:
+            count = await asyncio.to_thread(breaker.fuse_count, config_dir)
+            text = breaker.trip_message(config_dir, count, trip["scope"])
+        except breaker.BreakerConfigError:
+            logger.exception("breaker: settings unresolvable — trip not announced")
+            return
         logger.warning("breaker tripped elsewhere (scope=%s) — announcing",
                        trip["scope"])
-        await self._notify(breaker.trip_message(config_dir, count, trip["scope"]))
+        await self._notify(text)
 
     async def _record_fuse(self) -> None:
         """Tally this tg fuse in the shared rolling window and, on a threshold
@@ -244,7 +249,11 @@ class ShellHost:
         logger.info("breaker: fuse recorded (%s), %d in window", self._shell, count)
         if tripped is None:
             return
-        message = breaker.trip_message(config_dir, count, tripped["scope"])
+        try:
+            message = breaker.trip_message(config_dir, count, tripped["scope"])
+        except breaker.BreakerConfigError:
+            logger.exception("breaker: settings unresolvable — trip not announced")
+            return
         logger.warning("breaker TRIPPED scope=%s reason=%s",
                        tripped["scope"], tripped["reason"])
         # Claim this trip on the shared marker: the notice below IS its
@@ -306,7 +315,7 @@ class ShellHost:
     # --- timing ---------------------------------------------------------
 
     def _idle_window(self) -> float:
-        return self._cfg.shell_idle_min * 60.0
+        return self._cfg.idle_window_min() * 60.0
 
     def _resume_idle_basis(self) -> float:
         """Idle basis at boot: the ledger's, so a restart continues the window

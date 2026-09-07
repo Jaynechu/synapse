@@ -1,5 +1,6 @@
-"""Repo-wide safety net: block real `claude` process spawns during tests, and
-block any write to the LIVE marrow config dir.
+"""Repo-wide safety net: block real `claude` process spawns during tests, block
+any write to the LIVE marrow config dir, and stub the upstream (marrow/cortex)
+`config --resolved` subprocesses.
 
 `synapse_core.providers.cc.ClaudeCodeProvider.spawn()` is the only provider
 that shells out via `subprocess.Popen`. Scoped to cc.py's own `subprocess`
@@ -17,6 +18,34 @@ import pytest
 
 import synapse_core.breaker as breaker
 import synapse_core.providers.cc as cc
+import synapse_core.upstream as upstream
+
+# What the owning repos answer during tests. Values are fixtures, not defaults:
+# the real ones come from `mw config --resolved` / `cortex.ctl config
+# --resolved`, which must never be spawned from the suite.
+UPSTREAM_MARROW = {
+    "cortex": {
+        "breaker": {
+            "enabled": True,
+            "fuse_threshold": 2,
+            "window_hours": 24,
+            "trip_message": (
+                "Circuit breaker tripped: fuse #{count} within {hours}h. Cortex "
+                "autonomous activity paused ({scope}). Clear with ct-duty cli|tg|all."
+            ),
+        },
+    },
+}
+UPSTREAM_CORTEX = {"wake": {"default_sleep_min": 55}}
+
+
+@pytest.fixture(autouse=True)
+def _stub_upstream_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test may shell out to marrow or cortex. Tests needing the failure
+    path monkeypatch these back to raisers."""
+    upstream.reset_cache()
+    monkeypatch.setattr(upstream, "marrow_config", lambda: UPSTREAM_MARROW)
+    monkeypatch.setattr(upstream, "cortex_config", lambda: UPSTREAM_CORTEX)
 
 
 def _blocked_popen(*args: object, **kwargs: object) -> None:

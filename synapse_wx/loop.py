@@ -33,16 +33,15 @@ from .split import (
     split_for_wechat_typed,
 )
 from synapse_core.state import BridgeState, remember_resolved_model
+from synapse_core.config import default_value
 from synapse_core.text_clean import strip_tool_xml
+
 from .typing_ping import TypingPing
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_ALERT_DIR = Path.home() / ".config" / "synapse-wx" / "alerts"
 DEFAULT_MEDIA_DIR = Path.home() / ".config" / "synapse-wx" / "media"
-_DEFAULT_BUBBLE_GAP_SEC = 0.8
-_DEFAULT_BUBBLE_CAP = 10
-_DEFAULT_STORM_CAP = 5
 # Idle listener scheduling (internal, not user-varying): poll one line each
 # iteration; after releasing the flush lock, sleep so a pending maybe_flush can
 # win it.
@@ -150,12 +149,12 @@ class MainLoop:
         self._cfg = cfg
         # Config-first bubble pacing; falls back to default when cfg absent.
         self._bubble_gap_sec = (
-            cfg.bubble_gap_sec if cfg is not None else _DEFAULT_BUBBLE_GAP_SEC
+            cfg.bubble_gap_sec if cfg is not None else default_value("bubble_gap_sec")
         )
         # Outbound-edge bubble cap (main defense vs iLink count quota): merge
         # adjacent text bubbles until the turn fits within this many.
         self._bubble_cap = (
-            cfg.bubble_cap if cfg is not None else _DEFAULT_BUBBLE_CAP
+            cfg.bubble_cap if cfg is not None else default_value("bubble_cap")
         )
         # B1: best-effort sessions row writer. Default no-op so tests + mock
         # provider paths don't pay the marrow-CLI penalty.
@@ -203,7 +202,7 @@ class MainLoop:
         self._provider_death_count: int = 0
         # Storm guard: >cap unsolicited turns in one lock-hold raises an alert.
         self._storm_cap = (
-            cfg.unsolicited_storm_cap if cfg is not None else _DEFAULT_STORM_CAP
+            cfg.unsolicited_storm_cap if cfg is not None else default_value("unsolicited_storm_cap")
         )
 
         # Decouple inbound long-poll from outbound flush:
