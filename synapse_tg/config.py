@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import tomllib
 from pathlib import Path
 
 from synapse_core import upstream
@@ -16,6 +15,10 @@ DEFAULT_CONFIG_PATH = USER_CONFIG_PATHS["tg"]
 # cortex owns the free-round cadence; [cortex].shell_idle_min in a user file
 # pins it, otherwise it is read from here.
 CORTEX_IDLE_KEY = "wake.default_sleep_min"
+
+# marrow owns the shell roster; it is read from marrow's RESOLVED config, never
+# from its user file (a key left at marrow's packaged default is absent there).
+MARROW_SHELLS_KEY = "cortex.shells"
 
 
 class TgConfig(ConfigView):
@@ -50,19 +53,19 @@ class TgConfig(ConfigView):
         return float(self.shell_idle_min)
 
     def _cortex_shells(self) -> list[str]:
-        """marrow's [cortex].shells, lowercased (single source, resolved via
-        marrow_config_dir — same file cortex's shell_enabled() reads).
-        Missing/unreadable marrow config or missing key -> empty list."""
-        p = self.marrow_config_dir() / "config.toml"
+        """marrow's [cortex].shells, lowercased (single source). Asked of
+        marrow's resolved config, so a roster left at marrow's packaged default
+        still resolves. Unreadable marrow, or a missing/malformed key -> empty
+        list (shell off, standalone-synapse fallback)."""
         try:
-            if p.is_file():
-                data = tomllib.loads(p.read_bytes().decode("utf-8"))
-                shells = (data.get("cortex") or {}).get("shells")
-                if isinstance(shells, list):
-                    return [str(s).strip().lower() for s in shells]
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, TypeError) as e:
-            logger.warning("marrow config read failed (%s) — shell off", e)
-        return []
+            shells = upstream.value(upstream.marrow_config(), MARROW_SHELLS_KEY)
+        except upstream.UpstreamError as e:
+            logger.warning("marrow %s unreadable (%s) — shell off", MARROW_SHELLS_KEY, e)
+            return []
+        if not isinstance(shells, list):
+            logger.warning("marrow %s is %r — shell off", MARROW_SHELLS_KEY, shells)
+            return []
+        return [str(s).strip().lower() for s in shells]
 
     def shell_active(self) -> bool:
         """shell_enabled AND `shell_id` listed in marrow's [cortex].shells.

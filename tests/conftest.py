@@ -10,6 +10,7 @@ mw lookups, alerts) keep working untouched.
 
 from __future__ import annotations
 
+import copy
 import subprocess
 import types
 from pathlib import Path
@@ -25,6 +26,7 @@ import synapse_core.upstream as upstream
 # --resolved`, which must never be spawned from the suite.
 UPSTREAM_MARROW = {
     "cortex": {
+        "shells": ["cli", "tg"],
         "breaker": {
             "enabled": True,
             "fuse_threshold": 2,
@@ -46,6 +48,17 @@ def _stub_upstream_config(monkeypatch: pytest.MonkeyPatch) -> None:
     upstream.reset_cache()
     monkeypatch.setattr(upstream, "marrow_config", lambda: UPSTREAM_MARROW)
     monkeypatch.setattr(upstream, "cortex_config", lambda: UPSTREAM_CORTEX)
+
+
+@pytest.fixture
+def marrow_shells(monkeypatch: pytest.MonkeyPatch):
+    """Override marrow's resolved [cortex].shells for one test, e.g.
+    marrow_shells(["cli"]) to take the tg shell out of the roster."""
+    def _set(shells) -> None:
+        data = copy.deepcopy(UPSTREAM_MARROW)
+        data["cortex"]["shells"] = shells
+        monkeypatch.setattr(upstream, "marrow_config", lambda: data)
+    return _set
 
 
 def _blocked_popen(*args: object, **kwargs: object) -> None:

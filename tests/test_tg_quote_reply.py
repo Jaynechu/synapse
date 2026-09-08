@@ -40,7 +40,6 @@ def passthrough_render(monkeypatch):
 
 
 def _loop(tmp_path, cache: dict[int, str] | None = None) -> TgLoop:
-    (tmp_path / "config.toml").write_text('[cortex]\nshells = ["cli", "tg"]\n')
     cfg = TgConfig(data_dir=tmp_path / "tg-data",
                    marrow_db=str(tmp_path / "marrow.db"))
     loop = TgLoop(cfg)

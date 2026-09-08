@@ -116,12 +116,9 @@ def real_sleep(monkeypatch):
     monkeypatch.setattr("synapse_tg.loop.asyncio.sleep", _REAL_SLEEP)
 
 
-def _loop(tmp_path, alerts=None, storm_cap=5, shells=("cli", "tg")):
-    # marrow config dir = parent of marrow_db; shell_peer() reads
-    # [cortex].shells from there, so it must never resolve to the live dir.
-    (tmp_path / "config.toml").write_text(
-        "[cortex]\nshells = [%s]\n" % ", ".join(f'"{s}"' for s in shells)
-    )
+def _loop(tmp_path, alerts=None, storm_cap=5):
+    # shell_peer() takes [cortex].shells from marrow's resolved config (cli+tg
+    # from conftest); the `marrow_shells` fixture overrides the roster.
     cfg = TgConfig(data_dir=tmp_path / "tg-data",
                    marrow_db=str(tmp_path / "marrow.db"),
                    unsolicited_storm_cap=storm_cap)
@@ -410,8 +407,10 @@ def test_transfer_receipt_names_the_peer_shell(tmp_path, monkeypatch):
     ]
 
 
-def test_transfer_peer_falls_back_when_shells_names_no_other(tmp_path, monkeypatch):
-    loop = _loop(tmp_path, shells=("tg",))
+def test_transfer_peer_falls_back_when_shells_names_no_other(tmp_path, monkeypatch,
+                                                             marrow_shells):
+    marrow_shells(["tg"])
+    loop = _loop(tmp_path)
     bot = FakeBot()
     provider = ScriptedProvider([_transfer_turn({})])
     assert _cycle(loop, bot, provider, monkeypatch)[-1] == "\U0001f504 Transferred to ?"

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from synapse_core import shell_state
+from synapse_core import shell_state, upstream
 from synapse_core.sessionend.tracker import SessionTracker
 from synapse_tg.config import TgConfig, load_config
 from synapse_tg.loop import TgLoop
@@ -107,11 +107,9 @@ class Clock:
 
 def _cfg(tmp_path, **kw):
     # Marrow config dir = parent of marrow_db (shared with breaker files).
-    # shell_active() reads [cortex].shells from here (T7 single source) —
-    # write it so ShellHost tests see the shell as active by default.
-    marrow_cfg = tmp_path / "config.toml"
-    if not marrow_cfg.exists():
-        marrow_cfg.write_text('[cortex]\nshells = ["tg"]\n')
+    # shell_active() takes [cortex].shells from marrow's RESOLVED config (T7
+    # single source), stubbed with cli+tg in conftest — the shell is active by
+    # default here; `marrow_shells` overrides it per test.
     base = dict(
         data_dir=tmp_path / "tg-data",
         marrow_db=str(tmp_path / "marrow.db"),
@@ -1354,17 +1352,38 @@ def test_feed_turn_without_a_chat_target_is_skipped(tmp_path):
 
 # ── enable switch (T7: marrow [cortex].shells single source) ──────────────────
 
-def test_shell_off_when_marrow_config_absent_injects_no_cortex_env(tmp_path):
-    """Missing marrow config -> shell off (standalone-synapse fallback)."""
+def test_shell_off_when_marrow_is_unreadable(tmp_path, monkeypatch):
+    """Unreachable marrow -> shell off (standalone-synapse fallback)."""
+    def boom():
+        raise upstream.UpstreamError("marrow config unreadable")
+
+    monkeypatch.setattr(upstream, "marrow_config", boom)
     loop = TgLoop(TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db")))
     assert loop._make_provider().extra_env == {}
     assert loop._shell is None
 
 
-def test_shell_off_when_tg_absent_from_marrow_shells(tmp_path):
-    (tmp_path / "config.toml").write_text('[cortex]\nshells = ["cli"]\n')
+def test_shell_off_when_tg_absent_from_marrow_shells(tmp_path, marrow_shells):
+    marrow_shells(["cli"])
     loop = TgLoop(TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db")))
     assert loop._make_provider().extra_env == {}
+
+
+def test_shells_resolved_from_marrow_not_its_user_file(tmp_path):
+    """The roster equals marrow's packaged default, so marrow's user file has no
+    `shells` line — the value still resolves (09-07: reading the raw file saw
+    nothing and the tg ShellHost never started)."""
+    (tmp_path / "config.toml").write_text('[cortex]\nenabled = true\n')
+    cfg = TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db"))
+    assert cfg._cortex_shells() == ["cli", "tg"]
+    assert cfg.shell_active() is True
+
+
+def test_shells_malformed_turns_the_shell_off(tmp_path, marrow_shells):
+    marrow_shells("tg")
+    cfg = TgConfig(data_dir=tmp_path / "d", marrow_db=str(tmp_path / "marrow.db"))
+    assert cfg._cortex_shells() == []
+    assert cfg.shell_active() is False
 
 
 def test_shell_active_injects_the_shell_id(tmp_path):
