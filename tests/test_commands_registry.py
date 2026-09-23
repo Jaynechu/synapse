@@ -183,11 +183,21 @@ def test_model_raw_canonical_id_passes_through() -> None:
 def test_natural_alias_routes_as_model() -> None:
     s = BridgeState(model=None, session_id="sid-xyz")
     reg, hooks, _ = _make(s)
-    verdict, reply = reg.dispatch("4.7")
+    verdict, reply = reg.dispatch("sonnet")
     assert verdict == "handled"
-    assert reply == "🤖(Opus 4.7 [1M])上线中..."
-    assert hooks.swap_calls == [("claude-opus-4-7[1m]", "sid-xyz")]
-    assert s.model == "claude-opus-4-7[1m]"
+    assert reply == "🤖(Sonnet)上线中..."
+    assert hooks.swap_calls == [("sonnet", "sid-xyz")]
+    assert s.model == "sonnet"
+
+
+def test_digit_alias_does_not_route_as_natural_model() -> None:
+    """Digit-bearing keys (e.g. "4.7"/"5.5") only work via /model, never bare text."""
+    s = BridgeState(model=None, session_id="sid-xyz")
+    reg, hooks, _ = _make(s)
+    verdict, reply = reg.dispatch("4.7")
+    assert verdict == "forward"
+    assert reply is None
+    assert hooks.swap_calls == []
 
 
 def test_natural_alias_case_insensitive() -> None:

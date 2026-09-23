@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from synapse_core.commands.aliases import (
     MODEL_ALIASES,
+    NATURAL_ALIASES,
     display_name,
     resolve_model,
 )
@@ -44,6 +45,14 @@ def test_resolve_alias_fable() -> None:
     assert resolve_model("5") == "fable"
     assert resolve_model("fable") == "fable"
     assert resolve_model("5.1") == "claude-fable-5-1"
+
+
+def test_resolve_alias_55_pins_opus() -> None:
+    assert resolve_model("5.5") == "claude-opus-5-5[1m]"
+
+
+def test_natural_aliases_exclude_any_digit_key() -> None:
+    assert not any(any(c.isdigit() for c in k) for k in NATURAL_ALIASES)
 
 
 def test_no_alias_target_is_a_pinned_current_model() -> None:

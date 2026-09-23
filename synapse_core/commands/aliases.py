@@ -13,6 +13,7 @@ MODEL_ALIASES: dict[str, str] = {
     "4.7": "claude-opus-4-7[1m]",
     "4.8": "claude-opus-4-8[1m]",
     "5.1": "claude-fable-5-1",
+    "5.5": "claude-opus-5-5[1m]",
     "5": "fable",
     "5o": "opus",
     "5f": "fable",
@@ -23,8 +24,8 @@ MODEL_ALIASES: dict[str, str] = {
 }
 
 # Aliases safe for bare-text natural matching (no slash prefix).
-# Digit-only keys excluded — too easy to misfire in wx/tg chat.
-NATURAL_ALIASES: set[str] = {k for k in MODEL_ALIASES if not k.isdigit()}
+# Any key containing a digit is excluded — too easy to misfire in wx/tg chat.
+NATURAL_ALIASES: set[str] = {k for k in MODEL_ALIASES if not any(c.isdigit() for c in k)}
 
 # Strip cc context-window suffix like "[1m]" / "[200k]" before prettifying,
 # then re-append in uppercase so /info shows "Opus 4.7 [1M]" not "Opus 4.7".
