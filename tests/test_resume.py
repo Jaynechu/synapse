@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from synapse_core.commands.registry import CommandContext, Registry
+import pytest
+
+from synapse_core import timeutil
+from synapse_core.commands.registry import CommandContext, Registry, _fmt_last_active
 from synapse_core.state import BridgeState
 
 
@@ -253,3 +256,20 @@ def test_resume_cwd_unchanged_when_not_a_dir(tmp_path) -> None:
     _, reply = reg.dispatch("/resume sid-xyz")
     assert state.cc_cwd == "/original"
     assert "\n" not in (reply or "")
+
+
+@pytest.mark.parametrize("raw, want", [
+    ("2026-09-30T03:40:12+10:00", "03:40"),
+    ("2026-10-05T03:05:00+11:00", "03:05"),
+    ("2026-09-29T19:40:12+02:00", "03:40"),
+    ("2026-09-29T17:40:12Z", "03:40"),
+    ("2026-09-29T17:40:12.456Z", "03:40"),
+    ("2026-09-29T17:40:12", "03:40"),
+    ("", ""),
+    ("-", ""),
+    ("x", ""),
+])
+def test_fmt_last_active_honours_offset(monkeypatch, raw, want) -> None:
+    monkeypatch.setattr(timeutil, "_configured", timeutil.resolve_tz("Australia/Melbourne"))
+    assert _fmt_last_active(raw) == want
+

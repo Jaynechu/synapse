@@ -125,7 +125,8 @@ def list_recent_sessions(
 ) -> list[dict]:
     """Best-effort fetch of the recent-session picker rows.
 
-    Output is tab-separated lines: `sid\\tmodel\\tchannel\\tcwd\\tlast_active\\ttitle`.
+    Output is tab-separated lines: `sid\\tmodel\\tchannel\\tcwd\\tlast_active\\ttitle\\teffort`;
+    last_active is local ISO with offset.
     Returns [] on miss / error.
 
     For any row with an empty model column the jsonl fallback fills it from

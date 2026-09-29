@@ -68,7 +68,9 @@ def _format_cwd_presets() -> str:
 
 
 def _fmt_last_active(raw: str | None) -> str:
-    """Render sessions.last_active (ISO-8601 UTC `Z`) as local HH:MM.
+    """Render last_active (ISO-8601 with offset, as printed by `mw
+    list-recent-sessions`) as local HH:MM. The offset is honoured; a naive
+    value is read as UTC.
 
     Returns an empty string on parse failure so the picker line just drops
     the timestamp instead of leaking a parse error.
@@ -76,11 +78,12 @@ def _fmt_last_active(raw: str | None) -> str:
     if not raw:
         return ""
     try:
-        ts = raw.rstrip("Z")
-        dt_utc = datetime.fromisoformat(ts).replace(tzinfo=UTC)
-        return to_local(dt_utc).strftime("%H:%M")
-    except Exception:  # noqa: BLE001
+        dt = datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
         return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return to_local(dt).strftime("%H:%M")
 
 
 def _format_resume_picker(rows: list[dict]) -> str:
