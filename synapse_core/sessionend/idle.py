@@ -6,11 +6,11 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 
 from synapse_core import session_lock
 from synapse_core.config import default_value
+from synapse_core.timeutil import local_now
 
 from .tracker import SessionTracker
 
@@ -117,7 +117,7 @@ class IdleFireLoop:
     def _audit(self, line: str) -> None:
         try:
             self._audit_log.parent.mkdir(parents=True, exist_ok=True)
-            today = datetime.now().strftime("%Y-%m-%d")
+            today = local_now().strftime("%Y-%m-%d")
             with self._audit_log.open("a") as f:
                 f.write(f"[{today}] {line}\n")
         except OSError as e:

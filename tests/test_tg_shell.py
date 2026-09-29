@@ -1237,7 +1237,7 @@ def test_rotate_waits_for_an_in_flight_turn(tmp_path):
 
 def _freeze_now(monkeypatch, loop):
     """Pin datetime.now() at 22:15 local; return that epoch."""
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
 
     class _Fixed(mod.datetime):
         @classmethod

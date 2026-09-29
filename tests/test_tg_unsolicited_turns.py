@@ -316,7 +316,7 @@ def _cycle(loop, bot, provider, monkeypatch, body="hi"):
 
 
 def test_lie_down_notice_lands_under_the_reply_text(tmp_path, monkeypatch):
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
     _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
     loop = _loop(tmp_path)
     bot = FakeBot()
@@ -329,7 +329,7 @@ def test_lie_down_notice_lands_under_the_reply_text(tmp_path, monkeypatch):
 def test_lie_down_notice_is_not_sent_during_the_turn(tmp_path, monkeypatch):
     """_stream_response alone must emit nothing — the receipt waits for the
     end of the reply cycle."""
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
     _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
     loop = _loop(tmp_path)
     bot = FakeBot()
@@ -341,7 +341,7 @@ def test_lie_down_notice_is_not_sent_during_the_turn(tmp_path, monkeypatch):
 
 
 def test_textless_turn_still_ships_its_receipt(tmp_path, monkeypatch):
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
     _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
     loop = _loop(tmp_path)
     bot = FakeBot()
@@ -378,7 +378,7 @@ def test_other_tool_use_sends_no_receipt(tmp_path, monkeypatch):
 
 def test_lie_down_template_override_applies(tmp_path, monkeypatch):
     from synapse_core.commands import messages
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
     _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
     messages.load_overrides({"shell.lie_down": {"cn": "睡 {min} 分钟，{time} 见"}})
     try:
@@ -453,7 +453,7 @@ def test_transfer_template_override_applies(tmp_path, monkeypatch):
 
 def test_rotate_notice_lands_under_the_reply_text(tmp_path, monkeypatch, no_spawn, real_sleep):
     """A rotate kick landing mid-turn used to beat the reply out the door."""
-    import synapse_tg.loop as mod
+    import synapse_core.timeutil as mod
     _FixedClock(2026, 7, 26, 10, 0).install(monkeypatch, mod)
     loop = _loop(tmp_path)
     bot = FakeBot()

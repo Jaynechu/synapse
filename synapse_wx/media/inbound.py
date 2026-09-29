@@ -15,9 +15,10 @@ import logging
 import shutil
 import subprocess
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from synapse_core.timeutil import local_now
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ def _pdf_needs_pre_extract(path: Path) -> bool:
 
 def _stamp() -> str:
     """`YYYY-MM-DD_HHMMSS_<uuid6>` timestamp for media filenames."""
-    return datetime.now().strftime("%Y-%m-%d_%H%M%S_") + uuid.uuid4().hex[:6]
+    return local_now().strftime("%Y-%m-%d_%H%M%S_") + uuid.uuid4().hex[:6]
 
 
 def _suffix_for(event: dict, kind: str) -> str:

@@ -13,7 +13,7 @@ from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, MessageHandler, filters
 from telegram.request import HTTPXRequest
 
-from synapse_core import marrow_session
+from synapse_core import marrow_session, timeutil
 from synapse_core.alerts import AlertSink
 from synapse_core.commands import marrow_audit, messages
 from synapse_core.commands.handlers import replay_for_channel
@@ -63,6 +63,7 @@ def main() -> int:
     config_path = os.environ.get("SYNAPSE_TG_CONFIG", "").strip()
     cfg = load_config(Path(config_path) if config_path else None)
     configure_logging(Path(cfg.log_file).expanduser())
+    timeutil.configure(cfg.timezone)
     if cfg.ack_overrides:
         messages.load_overrides(cfg.ack_overrides)
 

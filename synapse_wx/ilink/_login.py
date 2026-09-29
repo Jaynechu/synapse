@@ -6,6 +6,8 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from synapse_core.timeutil import local_now
+
 from ._auth import CONFIG_DIR, ILINK_BASE_URL, save_token, validate_base_url
 
 if TYPE_CHECKING:
@@ -48,7 +50,7 @@ def run_qr_login(client: ILinkClient) -> None:
                 {
                     "bot_token": client.bot_token,
                     "base_url": client.base_url,
-                    "login_time": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "login_time": local_now().strftime("%Y-%m-%dT%H:%M:%S"),
                 }
             )
             print("Login successful!")

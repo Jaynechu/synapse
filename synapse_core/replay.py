@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +43,7 @@ def _parse_ts(raw: Any) -> float:
         return 0.0
     s = raw.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(s).astimezone(UTC).timestamp()
+        return datetime.fromisoformat(s).timestamp()
     except ValueError:
         return 0.0
 

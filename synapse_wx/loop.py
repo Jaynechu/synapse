@@ -27,6 +27,7 @@ from synapse_core.providers.cc import POLL_EOF
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.sessionend.idle import IdleFireLoop
 from synapse_core.sessionend.tracker import SessionTracker
+from synapse_core.timeutil import local_now, resolve_tz
 from .split import (
     format_thinking_bubbles,
     merge_bubbles_to_cap,
@@ -119,7 +120,7 @@ class MainLoop:
         buffer: InboundBuffer | None = None,
         poll_interval_sec: float = 1.0,
         clock: Callable[[], float] = time.monotonic,
-        wallclock: Callable[[], datetime] = datetime.now,
+        wallclock: Callable[[], datetime] | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         alert_dir: Path = DEFAULT_ALERT_DIR,
         registry: Registry | None = None,
@@ -141,7 +142,8 @@ class MainLoop:
         self._buffer = buffer if buffer is not None else InboundBuffer(clock=clock)
         self._poll_interval_sec = poll_interval_sec
         self._clock = clock
-        self._wallclock = wallclock
+        tz = resolve_tz(cfg.timezone) if cfg is not None else None
+        self._wallclock = wallclock or (lambda: local_now(tz))
         self._sleeper = sleeper
         self._alert_dir = Path(alert_dir)
         self._registry = registry

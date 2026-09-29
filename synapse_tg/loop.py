@@ -30,6 +30,7 @@ from synapse_core.providers.cc import BRIDGE_DELIVERY_PROMPT, ClaudeCodeProvider
 from synapse_core.providers.errors import ProviderDeadError
 from synapse_core.state import BridgeState, remember_resolved_model
 from synapse_core.text_clean import strip_tool_xml
+from synapse_core.timeutil import from_timestamp, local_now, resolve_tz
 
 from .media.inbound import (
     build_read_instruction,
@@ -41,7 +42,6 @@ from .media.inbound import (
 )
 from .markdown import gfm_to_tg_html
 from .media.outbound import send_media
-from .shell import _tzinfo
 from .split import split_for_tg_typed
 from .typing_action import TypingAction
 
@@ -155,7 +155,7 @@ class TgLoop:
         self._pending_chat_id: int | None = None
         self._bot: Bot | None = None
         self._state_path = cfg.data_dir / "bridge_state.json"
-        self._tz = _tzinfo(cfg.timezone)
+        self._tz = resolve_tz(cfg.timezone)
         self._state = self._load_state()
         self._registry = self._build_registry()
         self._queued_extra_bubbles: list[str] = []
@@ -730,8 +730,7 @@ class TgLoop:
 
     def _local_hhmm_plus(self, minutes: float = 0.0) -> str:
         """Now + `minutes`, rendered HH:mm in [core].timezone."""
-        now = datetime.now(self._tz)
-        return (now + timedelta(minutes=minutes)).strftime("%H:%M")
+        return (local_now(self._tz) + timedelta(minutes=minutes)).strftime("%H:%M")
 
     def _queue_lie_down(
         self, bot: Bot | None, chat_id: int | None, tool_input: dict
@@ -1248,13 +1247,13 @@ class TgLoop:
             return
         mins = 0
         if wake is not None:
-            mins = round((wake - datetime.now(self._tz).timestamp()) / 60)
+            mins = round((wake - local_now(self._tz).timestamp()) / 60)
         if mins <= 0:
             text = messages.t("shell.rotated", self._state.voice_style)
         else:
             text = messages.t(
                 "shell.rotated_wake", self._state.voice_style, min=mins,
-                time=datetime.fromtimestamp(wake, self._tz).strftime("%H:%M"))
+                time=from_timestamp(wake, self._tz).strftime("%H:%M"))
         await self._emit_notice(bot, chat_id, text)
 
     def _resolve_quote_target(self, fragment: str) -> int | None:

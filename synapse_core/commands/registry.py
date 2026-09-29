@@ -26,6 +26,7 @@ from typing import Literal
 
 from synapse_core import jsonl_edit
 from synapse_core.state import BridgeState
+from synapse_core.timeutil import to_local
 from synapse_core.usage import Usage
 from synapse_core.commands import messages
 from synapse_core.commands.aliases import MODEL_ALIASES, NATURAL_ALIASES, display_name, resolve_model
@@ -77,7 +78,7 @@ def _fmt_last_active(raw: str | None) -> str:
     try:
         ts = raw.rstrip("Z")
         dt_utc = datetime.fromisoformat(ts).replace(tzinfo=UTC)
-        return dt_utc.astimezone().strftime("%H:%M")
+        return to_local(dt_utc).strftime("%H:%M")
     except Exception:  # noqa: BLE001
         return ""
 

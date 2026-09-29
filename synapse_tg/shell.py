@@ -42,10 +42,10 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
 
 from synapse_core import breaker, shell_state
 from synapse_core.scheduler import Scheduler
+from synapse_core.timeutil import from_timestamp, resolve_tz, to_local
 
 if TYPE_CHECKING:
     from .config import TgConfig
@@ -105,20 +105,7 @@ def parse_wake_at(raw) -> float | None:
         dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
     except ValueError:
         return None
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-    return dt.timestamp()
-
-
-def _tzinfo(name: str):
-    """Configured display timezone; empty/unknown name -> None (system local)."""
-    if not (name or "").strip():
-        return None
-    try:
-        return ZoneInfo(name)
-    except Exception:  # noqa: BLE001 — a bad tz name must not kill the bridge
-        logger.warning("shell: unknown timezone %r — using system local", name)
-        return None
+    return to_local(dt).timestamp()
 
 
 class ShellHost:
@@ -126,7 +113,7 @@ class ShellHost:
 
     def __init__(self, cfg: "TgConfig", loop: "TgLoop", *, clock=None) -> None:
         self._cfg = cfg
-        self._tz = _tzinfo(cfg.timezone)
+        self._tz = resolve_tz(cfg.timezone)
         self._loop = loop
         self._shell = cfg.shell_id
         self._clock = clock or (lambda: datetime.now(timezone.utc).timestamp())
@@ -281,7 +268,7 @@ class ShellHost:
     # --- today ledger ----------------------------------------------------
 
     def _local_date(self) -> str:
-        return datetime.fromtimestamp(self._clock(), self._tz).strftime("%Y-%m-%d")
+        return from_timestamp(self._clock(), self._tz).strftime("%Y-%m-%d")
 
     def _today_base(self, state: dict, today: str) -> int:
         """Finished sessions' final occupancies for `today`. A ledger stamped

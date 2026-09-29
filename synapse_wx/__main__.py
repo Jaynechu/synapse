@@ -12,7 +12,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from synapse_core import bridge_state_store, marrow_session
+from synapse_core import bridge_state_store, marrow_session, timeutil
 from synapse_core.alerts import AlertSink
 from synapse_core.commands import handlers as cmd_handlers
 from .media import inbound as media_inbound
@@ -123,6 +123,7 @@ def _wrap_ilink_with_alert_hook(ilink: ILinkClient, alerts: AlertSink) -> None:
 def main() -> int:
     configure_logging(Path.home() / ".config/marrow/logs/synapse-wx/synapse-wx.log")
     cfg = load_config()
+    timeutil.configure(cfg.timezone)
     if cfg.ack_overrides:
         cmd_messages.load_overrides(cfg.ack_overrides)
     # /cwd presets: config wins over the SYNAPSE_CWD_PRESETS env fallback.

@@ -41,6 +41,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from synapse_core import upstream
+from synapse_core.timeutil import local_now, to_local
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ def trip(config_dir: str | os.PathLike[str], scope: str = SCOPE_ALL,
     both mean 'stop', so there is nothing to merge."""
     state = {"scope": str(scope).strip().lower() or SCOPE_ALL,
              "reason": reason,
-             "ts": (now or datetime.now().astimezone()).isoformat()}
+             "ts": (now or local_now()).isoformat()}
     p = breaker_path(config_dir)
     with _lock(p):
         _write_json(p, state)
@@ -216,7 +217,7 @@ def _parse(ts) -> datetime | None:
         dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
-    return dt.astimezone() if dt.tzinfo is None else dt
+    return to_local(dt) if dt.tzinfo is None else dt
 
 
 def _prune(events: list, cutoff: datetime) -> list:
@@ -237,7 +238,7 @@ def record_fuse(config_dir: str | os.PathLike[str], shell: str, *,
     """Append one fuse event for `shell`, prune the rolling window, return the
     surviving count ACROSS ALL SHELLS (both write this same file)."""
     cfg = settings(config_dir)
-    now = now or datetime.now().astimezone()
+    now = now or local_now()
     cutoff = now - timedelta(hours=float(cfg["window_hours"]))
     p = fuse_path(config_dir)
     with _lock(p):
@@ -256,7 +257,7 @@ def fuse_count(config_dir: str | os.PathLike[str], *,
     needs to fill trip_message's {count} when the trip was written by the other
     shell. Absent/unreadable tally -> 0."""
     cfg = settings(config_dir)
-    now = now or datetime.now().astimezone()
+    now = now or local_now()
     cutoff = now - timedelta(hours=float(cfg["window_hours"]))
     data = _read_json(fuse_path(config_dir), {})
     events = data.get("events")
