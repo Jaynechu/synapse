@@ -34,6 +34,7 @@ WX = ("wx",)
 FIELDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "timezone": ("core", "timezone", BOTH),
     "cc_path": ("provider", "cc_path", BOTH),
+    "system_prompt_file": ("provider", "system_prompt_file", BOTH),
     "cwd": ("provider", "cwd", TG),
     "cc_cwd": ("provider", "cc_cwd", WX),
     "marrow_bridge": ("provider", "marrow_bridge", TG),

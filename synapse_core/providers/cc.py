@@ -135,10 +135,6 @@ NIGHT_SYSTEM_PROMPT = (
     "unless bedtime nudge activated."
 )
 
-# Same base prompt the cli alias uses (~/.zshrc) — replaces cc's default
-# system prompt; bridge prompts above still ride --append-system-prompt.
-BASE_SYSTEM_PROMPT_FILE = Path.home() / "CC-Lab/cc-kit/global/system-prompt.md"
-
 
 class ClaudeCodeProvider(Provider):
     """Persistent `claude` CLI subprocess speaking stream-json over stdio."""
@@ -150,6 +146,7 @@ class ClaudeCodeProvider(Provider):
         cwd: str | None = None,
         extra_env: dict[str, str] | None = None,
         binary: str = default_value("cc_path"),
+        system_prompt_file: str = default_value("system_prompt_file"),
         effort_level: str | None = None,
         *,
         channel: str,
@@ -165,6 +162,7 @@ class ClaudeCodeProvider(Provider):
         self.cwd = cwd
         self.extra_env = extra_env or {}
         self.binary = binary
+        self.system_prompt_file = Path(system_prompt_file).expanduser()
         # /effort: when set, append `--effort <level>` so cc uses the matching
         # effort tier on this swap. None = omit; cc applies its own default.
         # Valid levels: low|medium|high|xhigh|max|ultracode|auto (cc 2.1.159+).
@@ -220,8 +218,8 @@ class ClaudeCodeProvider(Provider):
             cmd += ["--resume", self.resume_sid]
         if self.effort_level:
             cmd += ["--effort", self.effort_level]
-        if BASE_SYSTEM_PROMPT_FILE.is_file():
-            cmd += ["--system-prompt-file", str(BASE_SYSTEM_PROMPT_FILE)]
+        if self.system_prompt_file.is_file():
+            cmd += ["--system-prompt-file", str(self.system_prompt_file)]
         # Teach cc the bridge-specific <quote> + media-tag protocols once per
         # session. On --resume, cc replays prior turns so the appended prompt
         # persists; injecting per-turn would pollute context, hence here only.

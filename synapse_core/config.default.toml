@@ -18,6 +18,9 @@ timezone = ""
 # ── Provider (shared) ─────────────────────────────────
 [provider]
 cc_path = "claude"
+# Base system prompt file passed via --system-prompt-file. Empty or
+# non-existent = cc's own default prompt (flag omitted).
+system_prompt_file = "~/.claude/system-prompt.md"
 # (tg) Default cwd for claude sessions started by the bridge. Empty = the
 # process cwd.
 cwd = ""

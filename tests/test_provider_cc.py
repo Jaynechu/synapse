@@ -95,6 +95,28 @@ def test_spawn_passes_resume_sid():
         assert cmd[cmd.index("--resume") + 1] == "abc123"
 
 
+def test_spawn_includes_system_prompt_file_when_present(tmp_path):
+    prompt_file = tmp_path / "system-prompt.md"
+    prompt_file.write_text("base prompt")
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen([])
+        p = _provider(system_prompt_file=str(prompt_file))
+        p.spawn()
+        cmd = Popen.call_args[0][0]
+        assert "--system-prompt-file" in cmd
+        assert cmd[cmd.index("--system-prompt-file") + 1] == str(prompt_file)
+
+
+def test_spawn_omits_system_prompt_file_when_missing(tmp_path):
+    missing = tmp_path / "does-not-exist.md"
+    with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
+        Popen.return_value = _make_fake_popen([])
+        p = _provider(system_prompt_file=str(missing))
+        p.spawn()
+        cmd = Popen.call_args[0][0]
+        assert "--system-prompt-file" not in cmd
+
+
 def test_spawn_env_includes_marrow_bridge_flag():
     with patch("synapse_core.providers.cc.subprocess.Popen") as Popen:
         Popen.return_value = _make_fake_popen([])
