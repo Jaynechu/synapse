@@ -135,6 +135,10 @@ NIGHT_SYSTEM_PROMPT = (
     "unless bedtime nudge activated."
 )
 
+# Same base prompt the cli alias uses (~/.zshrc) — replaces cc's default
+# system prompt; bridge prompts above still ride --append-system-prompt.
+BASE_SYSTEM_PROMPT_FILE = Path.home() / "CC-Lab/cc-kit/global/system-prompt.md"
+
 
 class ClaudeCodeProvider(Provider):
     """Persistent `claude` CLI subprocess speaking stream-json over stdio."""
@@ -216,6 +220,8 @@ class ClaudeCodeProvider(Provider):
             cmd += ["--resume", self.resume_sid]
         if self.effort_level:
             cmd += ["--effort", self.effort_level]
+        if BASE_SYSTEM_PROMPT_FILE.is_file():
+            cmd += ["--system-prompt-file", str(BASE_SYSTEM_PROMPT_FILE)]
         # Teach cc the bridge-specific <quote> + media-tag protocols once per
         # session. On --resume, cc replays prior turns so the appended prompt
         # persists; injecting per-turn would pollute context, hence here only.
