@@ -347,6 +347,7 @@ class TgLoop:
             model=state.model,
             resume_sid=state.session_id,
             binary=cfg.cc_path,
+            system_prompt_file=cfg.system_prompt_file,
             cwd=state.cc_cwd or (str(cfg.cwd) if cfg.cwd else None),
             channel="tg",
             marrow_bridge=cfg.marrow_bridge,

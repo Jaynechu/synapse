@@ -213,6 +213,7 @@ def main() -> int:
     ) -> ClaudeCodeProvider:
         return ClaudeCodeProvider(
             binary=cfg.cc_path,
+            system_prompt_file=cfg.system_prompt_file,
             model=model if model is not None else state.model,
             resume_sid=resume_sid,
             cwd=state.cc_cwd,
