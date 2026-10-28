@@ -35,7 +35,7 @@ fi
 echo "installing deps: .[${EXTRAS}]"
 "${BRIDGE_HOME}/.venv/bin/pip" install -q -e ".[${EXTRAS}]"
 
-mkdir -p "${USER_HOME}/Library/Logs" "${USER_HOME}/Library/LaunchAgents"
+mkdir -p "${USER_HOME}/Library/LaunchAgents"
 
 for CH in "${CHANNELS[@]}"; do
     MODULE="synapse_${CH}"
@@ -57,11 +57,15 @@ for CH in "${CHANNELS[@]}"; do
         echo "[${CH}] config already exists, skipping"
     fi
 
+    LOG_DIR="$("${BRIDGE_BIN}" -c 'import sys; from synapse_core.config import USER_CONFIG_PATHS, resolve; print(resolve(sys.argv[1], path=USER_CONFIG_PATHS[sys.argv[1]])[0]["log_file"].parent)' "${CH}")"
+    mkdir -p "${LOG_DIR}"
+
     sed \
         -e "s|__BRIDGE_BIN__|${BRIDGE_BIN}|g" \
         -e "s|__BRIDGE_MODULE__|${MODULE}|g" \
         -e "s|__BRIDGE_HOME__|${BRIDGE_HOME}|g" \
         -e "s|__USER_HOME__|${USER_HOME}|g" \
+        -e "s|__LOG_DIR__|${LOG_DIR}|g" \
         "${TEMPLATE}" > "${TARGET}"
 
     launchctl unload "${TARGET}" 2>/dev/null || true
@@ -71,5 +75,5 @@ for CH in "${CHANNELS[@]}"; do
         "${BRIDGE_BIN}" "${BRIDGE_HOME}/scripts/register_hooks.py" "${CH}" "${BRIDGE_HOME}" "${USER_HOME}/.claude/settings.json"
     fi
 
-    echo "[${CH}] loaded com.synapse-${CH}.bridge — logs at ${USER_HOME}/Library/Logs/synapse-${CH}.{out,err}.log"
+    echo "[${CH}] loaded com.synapse-${CH}.bridge — logs at ${LOG_DIR}/"
 done

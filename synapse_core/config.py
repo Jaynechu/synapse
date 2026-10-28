@@ -47,7 +47,9 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "unsolicited_storm_cap": ("provider", "unsolicited_storm_cap", BOTH),
     "max_consecutive_deaths": ("provider", "max_consecutive_deaths", TG),
     "data_dir": ("storage", "data_dir", TG),
-    "log_file": ("storage", "log_file", TG),
+    "log_file": ("storage", "log_file", BOTH),
+    "log_dir": ("log", "dir", BOTH),
+    "log_keep_days": ("log", "keep_days", BOTH),
     "user_name": ("persona", "user_name", TG),
     "assistant_name": ("persona", "assistant_name", TG),
     "marrow_db": ("marrow", "db", BOTH),
@@ -131,6 +133,7 @@ _MIN: dict[str, tuple[float, bool]] = {
     "shell_fuse_tokens": (0, False),
     "shell_context_notify_start": (0, False),
     "shell_context_notify_step": (0, False),
+    "log_keep_days": (1, False),
 }
 
 # Attributes whose runtime type TOML cannot express. "" means "unset".
@@ -242,6 +245,7 @@ def resolve(channel: str, *, path: Path | None = None,
 
     Returns the attribute -> value mapping for every field the channel reads,
     plus the set of attributes the user file (or `overrides`) set explicitly.
+    `log_file` always comes back as a resolved Path.
     """
     if channel not in CHANNELS:
         raise ConfigError(f"unknown channel {channel!r}")
@@ -272,7 +276,16 @@ def resolve(channel: str, *, path: Path | None = None,
             raise TypeError(f"unknown config field {attr!r}")
         values[attr] = value
         explicit.add(attr)
+    values["log_file"] = _log_file(channel, values)
     return values, explicit
+
+
+def _log_file(channel: str, values: dict[str, Any]) -> Path:
+    """The app log path: an explicit log_file, else derived from [log].dir."""
+    if values["log_file"]:
+        return Path(values["log_file"]).expanduser()
+    name = f"synapse-{channel}"
+    return Path(values["log_dir"]).expanduser() / name / f"{name}.log"
 
 
 def _user_set(user: dict, section: str, key: str) -> bool:

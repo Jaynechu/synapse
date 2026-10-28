@@ -143,3 +143,34 @@ def test_view_rejects_unknown_attribute() -> None:
 
     with pytest.raises(AttributeError):
         TgConfig().nope
+
+
+@pytest.mark.parametrize("channel", config.CHANNELS)
+def test_log_file_derives_from_log_dir(channel: str, tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text(f'[log]\ndir = "{tmp_path}/logs"\n')
+    values, _ = config.resolve(channel, path=p)
+    name = f"synapse-{channel}"
+    assert values["log_file"] == tmp_path / "logs" / name / f"{name}.log"
+
+
+def test_packaged_log_file_lands_under_the_log_root() -> None:
+    values, _ = config.resolve("tg")
+    root = Path(config.default_value("log_dir")).expanduser()
+    assert values["log_file"] == root / "synapse-tg" / "synapse-tg.log"
+    assert values["log_keep_days"] == config.default_value("log_keep_days")
+
+
+def test_second_instance_log_file_keeps_its_own_dir(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('[storage]\nlog_file = "~/x/synapse-tg-chat/synapse-tg-chat.log"\n')
+    values, explicit = config.resolve("tg", path=p)
+    assert values["log_file"] == Path.home() / "x/synapse-tg-chat/synapse-tg-chat.log"
+    assert "log_file" in explicit
+
+
+def test_keep_days_below_one_keeps_the_default(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("[log]\nkeep_days = 0\n")
+    values, _ = config.resolve("wx", path=p)
+    assert values["log_keep_days"] == config.default_value("log_keep_days")

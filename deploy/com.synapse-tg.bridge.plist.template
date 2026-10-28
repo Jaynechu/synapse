@@ -36,10 +36,10 @@
     <integer>30</integer>
 
     <key>StandardOutPath</key>
-    <string>__USER_HOME__/Library/Logs/synapse-tg.out.log</string>
+    <string>__LOG_DIR__/launchd.log</string>
 
     <key>StandardErrorPath</key>
-    <string>__USER_HOME__/Library/Logs/synapse-tg.err.log</string>
+    <string>__LOG_DIR__/launchd.log</string>
 
     <key>ProcessType</key>
     <string>Background</string>

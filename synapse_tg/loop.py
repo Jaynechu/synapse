@@ -352,7 +352,7 @@ class TgLoop:
             channel="tg",
             marrow_bridge=cfg.marrow_bridge,
             effort_level=state.effort_level,
-            stderr_log=Path.home() / "Library/Logs/synapse-tg-cc-stderr.log",
+            stderr_log=cfg.log_file.parent / "cc-stderr.log",
             system_prompts=[BRIDGE_DELIVERY_PROMPT, QUOTE_SYSTEM_PROMPT, MEDIA_SYSTEM_PROMPT, TG_BUBBLE_FORMAT_PROMPT, NIGHT_SYSTEM_PROMPT],
             idle_soft_s=cfg.idle_soft_s,
             idle_hard_s=cfg.idle_hard_s,

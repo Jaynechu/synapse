@@ -27,6 +27,7 @@ def _drain_stderr(
 ) -> None:
     """Daemon thread: read cc stderr line-by-line and append to log_path."""
     try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
             for raw_line in stderr_pipe:
                 line = raw_line.rstrip("\n")

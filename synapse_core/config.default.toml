@@ -50,13 +50,21 @@ unsolicited_storm_cap = 5
 # (tg) Consecutive provider deaths before the bridge stops respawning.
 max_consecutive_deaths = 3
 
-# ── Storage (tg) ──────────────────────────────────────
+# ── Storage ───────────────────────────────────────────
 [storage]
-# Runtime data directory. A second bot instance points this at its own dir.
+# (tg) Runtime data directory. A second bot instance points this at its own dir.
 data_dir = "~/.config/synapse-tg"
+# (shared) App log. Empty = <[log].dir>/synapse-<channel>/synapse-<channel>.log.
 # A second bot instance points this at its own file so the two never share a
-# log handler.
-log_file = "~/.config/marrow/logs/synapse-tg/synapse-tg.log"
+# log handler; cc-stderr.log is written next to it.
+log_file = ""
+
+# ── Logs (shared) ─────────────────────────────────────
+[log]
+# Root of every synapse log; each channel writes under <dir>/synapse-<channel>/.
+dir = "~/Library/Logs"
+# Daily rotations kept per app log.
+keep_days = 14
 
 # ── Persona (shared) ──────────────────────────────────
 [persona]

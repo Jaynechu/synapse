@@ -62,7 +62,6 @@ WX_BUBBLE_FORMAT_PROMPT = (
 CHANNEL = "wx"
 CHANNEL_LABEL = "CC-WX"
 CONFIG_DIR = Path.home() / ".config" / "synapse-wx"
-LOG_DIR = Path.home() / "Library" / "Logs"
 ALERTS_DIR = CONFIG_DIR / "alerts"
 BRIDGE_STATE_PATH = CONFIG_DIR / "bridge_state.json"
 HEALTH_STATE_PATH = CONFIG_DIR / "health.json"
@@ -70,7 +69,6 @@ LAST_ACTIVE_PATH = Path.home() / ".config" / "marrow" / "last_active.json"
 SESSION_STATE_PATH = CONFIG_DIR / "sessions.json"
 SESSION_MARKER_DIR = CONFIG_DIR / "markers"
 SESSION_AUDIT_LOG = CONFIG_DIR / "session_audit.log"
-CC_STDERR_LOG = LOG_DIR / "synapse-wx-cc-stderr.log"
 
 
 def _acquire_singleton_lock(path: Path) -> int:
@@ -121,8 +119,8 @@ def _wrap_ilink_with_alert_hook(ilink: ILinkClient, alerts: AlertSink) -> None:
 
 
 def main() -> int:
-    configure_logging(Path.home() / ".config/marrow/logs/synapse-wx/synapse-wx.log")
     cfg = load_config()
+    configure_logging(cfg.log_file, cfg.log_keep_days)
     timeutil.configure(cfg.timezone)
     if cfg.ack_overrides:
         cmd_messages.load_overrides(cfg.ack_overrides)
@@ -218,7 +216,7 @@ def main() -> int:
             resume_sid=resume_sid,
             cwd=state.cc_cwd,
             effort_level=state.effort_level,
-            stderr_log=CC_STDERR_LOG,
+            stderr_log=cfg.log_file.parent / "cc-stderr.log",
             system_prompts=[BRIDGE_DELIVERY_PROMPT, QUOTE_SYSTEM_PROMPT, MEDIA_SYSTEM_PROMPT, WX_ICLOUD_PROMPT, WX_STICKER_PROMPT, WX_BUBBLE_FORMAT_PROMPT, NIGHT_SYSTEM_PROMPT],
             marrow_bridge=True,
             channel=CHANNEL,

@@ -34,18 +34,19 @@ def _ours(root: logging.Logger) -> list[logging.Handler]:
 
 
 def test_only_a_rotating_file_handler_is_installed(clean_root, tmp_path: Path) -> None:
-    configure_logging(tmp_path / "a" / "b.log")
+    configure_logging(tmp_path / "a" / "b.log", 7)
     ours = _ours(clean_root)
     assert len(ours) == 1
     assert isinstance(ours[0], TimedRotatingFileHandler)
+    assert ours[0].backupCount == 7
     assert not [h for h in clean_root.handlers
                 if type(h) is logging.StreamHandler
                 and h.stream in (sys.stderr, sys.stdout)]
 
 
 def test_reconfigure_replaces_its_own_handler(clean_root, tmp_path: Path) -> None:
-    configure_logging(tmp_path / "one.log")
-    configure_logging(tmp_path / "two.log")
+    configure_logging(tmp_path / "one.log", 14)
+    configure_logging(tmp_path / "two.log", 14)
     ours = _ours(clean_root)
     assert len(ours) == 1
     assert Path(ours[0].baseFilename) == tmp_path / "two.log"
@@ -53,7 +54,7 @@ def test_reconfigure_replaces_its_own_handler(clean_root, tmp_path: Path) -> Non
 
 def test_http_poll_lines_are_dropped(clean_root, tmp_path: Path) -> None:
     log = tmp_path / "svc" / "svc.log"
-    configure_logging(log)
+    configure_logging(log, 14)
     for name in QUIET:
         assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING
     logging.getLogger("httpx").info(

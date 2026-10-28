@@ -62,7 +62,7 @@ def main() -> int:
     # its own config (own token, data_dir, log file).
     config_path = os.environ.get("SYNAPSE_TG_CONFIG", "").strip()
     cfg = load_config(Path(config_path) if config_path else None)
-    configure_logging(Path(cfg.log_file).expanduser())
+    configure_logging(cfg.log_file, cfg.log_keep_days)
     timeutil.configure(cfg.timezone)
     if cfg.ack_overrides:
         messages.load_overrides(cfg.ack_overrides)

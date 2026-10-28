@@ -8,10 +8,9 @@ from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-BACKUP_COUNT = 14
 
 
-def configure_logging(log_path: Path) -> None:
+def configure_logging(log_path: Path, keep_days: int) -> None:
     level = getattr(
         logging,
         os.environ.get("SYNAPSE_LOG_LEVEL", "INFO").upper(),
@@ -32,7 +31,7 @@ def configure_logging(log_path: Path) -> None:
     file_handler = TimedRotatingFileHandler(
         log_path,
         when="midnight",
-        backupCount=BACKUP_COUNT,
+        backupCount=keep_days,
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
