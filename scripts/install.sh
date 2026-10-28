@@ -33,7 +33,7 @@ else
 fi
 
 echo "installing deps: .[${EXTRAS}]"
-"${BRIDGE_HOME}/.venv/bin/pip" install -q -e ".[${EXTRAS}]"
+uv pip install -q -e ".[${EXTRAS}]" --python "${BRIDGE_BIN}"
 
 mkdir -p "${USER_HOME}/Library/LaunchAgents"
 
