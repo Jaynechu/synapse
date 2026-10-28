@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import warnings
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def clean_root():
     root.setLevel(saved_level)
     for n, lvl in saved_levels.items():
         logging.getLogger(n).setLevel(lvl)
+    logging.captureWarnings(False)
 
 
 def _ours(root: logging.Logger) -> list[logging.Handler]:
@@ -67,3 +69,15 @@ def test_http_poll_lines_are_dropped(clean_root, tmp_path: Path) -> None:
     assert "getUpdates" not in text
     assert "receive_response_headers" not in text
     assert "inbound message" in text
+
+
+def test_python_warnings_land_in_log_not_stderr(clean_root, tmp_path: Path, capsys) -> None:
+    log = tmp_path / "svc" / "svc.log"
+    configure_logging(log, 14)
+    warnings.warn("something deprecated", UserWarning)
+    for h in _ours(clean_root):
+        h.flush()
+    text = log.read_text()
+    assert "something deprecated" in text
+    captured = capsys.readouterr()
+    assert "something deprecated" not in captured.err

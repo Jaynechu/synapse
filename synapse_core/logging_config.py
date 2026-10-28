@@ -41,3 +41,5 @@ def configure_logging(log_path: Path, keep_days: int) -> None:
     root.addHandler(file_handler)
     for name in ("apscheduler", "httpx", "httpcore"):
         logging.getLogger(name).setLevel(logging.WARNING)
+
+    logging.captureWarnings(True)
