@@ -42,6 +42,6 @@
     <string>__LOG_DIR__/launchd.log</string>
 
     <key>ProcessType</key>
-    <string>Background</string>
+    <string>Standard</string>
 </dict>
 </plist>
