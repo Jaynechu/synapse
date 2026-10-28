@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -40,11 +39,6 @@ def configure_logging(log_path: Path) -> None:
     file_handler.setLevel(level)
     file_handler._synapse_configured = True  # type: ignore[attr-defined]
 
-    stream_handler = logging.StreamHandler(sys.stderr)
-    stream_handler.setFormatter(formatter)
-    stream_handler.setLevel(level)
-    stream_handler._synapse_configured = True  # type: ignore[attr-defined]
-
     root.addHandler(file_handler)
-    root.addHandler(stream_handler)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    for name in ("apscheduler", "httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
