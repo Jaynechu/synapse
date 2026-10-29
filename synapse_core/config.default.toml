@@ -66,12 +66,6 @@ dir = "~/Library/Logs"
 # Daily rotations kept per app log.
 keep_days = 14
 
-# ── Persona (shared) ──────────────────────────────────
-[persona]
-# Display names in messages.
-user_name = "user"
-assistant_name = "assistant"
-
 # ── Marrow (shared) ───────────────────────────────────
 [marrow]
 # marrow.db — sessions table, audit_log, and (via its parent) the cross-repo

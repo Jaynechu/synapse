@@ -41,7 +41,6 @@ are defaults and can be deleted from your file.
 Key sections:
 
 - `[provider]` — cc path, system prompt file, cwd, projects dir, marrow toggle, liveness + storm caps
-- `[persona]` — user/assistant display names
 - `[cwd_presets]` — named shortcuts for `/cwd N` (key = menu label, order = digit)
 - `[marrow]` — db path + the `mw` session command templates
 - `[cortex]` — tg cortex shell (see COMMANDS.md)

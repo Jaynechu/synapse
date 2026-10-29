@@ -50,8 +50,6 @@ FIELDS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "log_file": ("storage", "log_file", BOTH),
     "log_dir": ("log", "dir", BOTH),
     "log_keep_days": ("log", "keep_days", BOTH),
-    "user_name": ("persona", "user_name", TG),
-    "assistant_name": ("persona", "assistant_name", TG),
     "marrow_db": ("marrow", "db", BOTH),
     "session_record_command": ("marrow", "session_record_command", BOTH),
     "session_get_model_command": ("marrow", "session_get_model_command", BOTH),
