@@ -16,7 +16,7 @@ MODEL_ALIASES: dict[str, str] = {
     "5.5": "claude-opus-5-5[1m]",
     "5": "fable",
     "5o": "opus",
-    "5f": "fable",
+    "5f": "claude-fable-5",
     "opus": "opus",
     "sonnet": "sonnet",
     "haiku": "haiku",
